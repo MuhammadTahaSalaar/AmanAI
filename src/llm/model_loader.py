@@ -53,8 +53,13 @@ class ModelLoader:
         else:
             self._load_cpu()
 
-        if self._lora_path:
+        if self._cuda_available and self._lora_path and Path(self._lora_path).exists():
             self._load_lora()
+        elif self._lora_path and not self._cuda_available:
+            logger.warning(
+                "LoRA adapter skipped — adapter was trained for the GPU model "
+                "and cannot be applied to the CPU fallback model.",
+            )
 
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token

@@ -1,0 +1,82 @@
+[
+    {
+        "question": "What is the profit rate on a NUST Bank savings account for a balance of 100,000 PKR?",
+        "ground_truth": "The profit rate depends on the balance tier. Please refer to the NUST Bank rate sheet effective July 1st, 2024 for exact rates."
+    },
+    {
+        "question": "How do I open a savings account with NUST Bank?",
+        "ground_truth": "You can open a savings account by visiting any NUST Bank branch with your CNIC and initial deposit."
+    },
+    {
+        "question": "What is the minimum deposit for a term deposit?",
+        "ground_truth": "The minimum deposit amount varies by term deposit product. Please check with NUST Bank for specific minimums."
+    },
+    {
+        "question": "What are the profit rates for 1-year term deposits?",
+        "ground_truth": "1-year term deposit rates are published in the NUST Bank rate sheet effective July 1st, 2024."
+    },
+    {
+        "question": "Can I transfer funds using the NUST Bank mobile app?",
+        "ground_truth": "Yes, NUST Bank's mobile app supports fund transfers including IBFT, intra-bank transfers, and bill payments."
+    },
+    {
+        "question": "What are the IBFT charges on fund transfers?",
+        "ground_truth": "IBFT charges depend on the transaction amount and channel used. Please refer to the schedule of charges."
+    },
+    {
+        "question": "Does NUST Bank offer foreign currency accounts?",
+        "ground_truth": "Yes, NUST Bank offers foreign currency (FCY) accounts with rates published in the rate sheet."
+    },
+    {
+        "question": "What is the profit rate on USD term deposits?",
+        "ground_truth": "USD term deposit rates are available in the foreign currency section of the NUST Bank rate sheet."
+    },
+    {
+        "question": "How do I reset my mobile banking password?",
+        "ground_truth": "You can reset your mobile banking password through the app's forgot password option or by contacting customer support."
+    },
+    {
+        "question": "What is the difference between a savings account and a term deposit?",
+        "ground_truth": "A savings account allows flexible deposits and withdrawals with variable profit rates. A term deposit locks your money for a fixed period at a higher fixed rate."
+    },
+    {
+        "question": "What documents do I need to open a bank account?",
+        "ground_truth": "You typically need a valid CNIC, proof of income, and passport-size photographs to open an account."
+    },
+    {
+        "question": "Is there a penalty for early withdrawal of a term deposit?",
+        "ground_truth": "Yes, early withdrawal of a term deposit may result in a reduced profit rate as per NUST Bank's terms and conditions."
+    },
+    {
+        "question": "What is the maximum daily limit for fund transfers?",
+        "ground_truth": "Daily transfer limits depend on the type of account and channel used. Please check with NUST Bank for your specific limit."
+    },
+    {
+        "question": "Does NUST Bank offer Roshan Digital Account?",
+        "ground_truth": "Please check with NUST Bank directly for information about Roshan Digital Account availability."
+    },
+    {
+        "question": "What are the operating hours of NUST Bank branches?",
+        "ground_truth": "NUST Bank branches typically operate Monday to Friday. Please contact your nearest branch for specific hours."
+    },
+    {
+        "question": "How can I check my account balance?",
+        "ground_truth": "You can check your balance through the mobile app, internet banking, ATM, or by calling the helpline."
+    },
+    {
+        "question": "What is the helpline number for NUST Bank?",
+        "ground_truth": "The NUST Bank helpline is +92 (51) 111 000 494."
+    },
+    {
+        "question": "What are the features of the NUST Bank mobile app?",
+        "ground_truth": "The mobile app supports fund transfers, bill payments, account management, and balance inquiries."
+    },
+    {
+        "question": "Can I deposit a cheque through the mobile app?",
+        "ground_truth": "Mobile cheque deposit availability depends on the app's current features. Please check the latest app version."
+    },
+    {
+        "question": "What happens if I forget my internet banking credentials?",
+        "ground_truth": "You can recover your credentials through the forgot password option or by contacting customer support."
+    }
+]

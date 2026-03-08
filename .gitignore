@@ -1,0 +1,41 @@
+# Dependencies
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data artifacts (large, generated)
+data/chroma_db/
+data/processed/
+*.pt
+*.bin
+*.safetensors
+*.gguf
+scripts/
+
+# Environment
+.env
+.rsync_exclude
+rsync_command.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.aiglobal/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference documents
+Plan/
+documents/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

@@ -1,0 +1,24 @@
+services:
+  amanai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amanai
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dataset:/app/dataset:ro
+      - ./data:/app/data
+      - model_cache:/root/.cache
+    env_file:
+      - .env
+    environment:
+      - EMBEDDING_DEVICE=cpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+volumes:
+  model_cache:

@@ -1,0 +1,10 @@
+{
+  "model": "unsloth/Llama-3.2-3B-Instruct",
+  "epochs": 3,
+  "train_samples": 684,
+  "val_samples": 77,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "final_train_loss": 0.5447162371273189,
+  "adapter_path": "data/lora_adapter"
+}

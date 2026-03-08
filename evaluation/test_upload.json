@@ -1,0 +1,30 @@
+[
+    {
+        "content": "NUST Bank has recently launched the 'NUST SmartWallet', a digital wallet integrated directly into the mobile banking app. The maximum daily transaction limit for the SmartWallet is PKR 50,000.",
+        "metadata": {
+            "source": "test_upload.json",
+            "category": "Digital Banking"
+        }
+    },
+    {
+        "content": "To activate the NUST SmartWallet, users must navigate to the 'Digital Services' tab in the app, select 'SmartWallet', and verify their identity using a one-time biometric scan.",
+        "metadata": {
+            "source": "test_upload.json",
+            "category": "Digital Banking"
+        }
+    },
+    {
+        "content": "A special promotion is running until December 2026: any NUST Bank customer who pays their university tuition fee using the NUST SmartWallet will receive a 5% cashback directly into their wallet balance.",
+        "metadata": {
+            "source": "test_upload.json",
+            "category": "Promotions"
+        }
+    },
+    {
+        "content": "If a user forgets their NUST SmartWallet PIN, they cannot reset it through the app. They must call the NUST Bank helpline at +92 (51) 111 000 494 and speak to a representative to request a PIN reset link.",
+        "metadata": {
+            "source": "test_upload.json",
+            "category": "Customer Support"
+        }
+    }
+]

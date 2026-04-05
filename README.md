@@ -54,7 +54,6 @@ AmanAI/
 
 ## Quick Start
 
-**Add this section to your README:**
 > ## System Requirements
 > * **OS:** Windows 10/11 with WSL2 (Windows Subsystem for Linux) **highly recommended**.
 > * **GPU:** NVIDIA GPU with at least 8GB VRAM (RTX 3070 or better).

@@ -52,18 +52,18 @@ AmanAI/
 └── documents/                      # Project documentation
 ```
 
-## Quick Start
+# Quick Start
 
-> ## System Requirements
-> * **OS:** Windows 10/11 with WSL2 (Windows Subsystem for Linux) **highly recommended**.
-> * **GPU:** NVIDIA GPU with at least 8GB VRAM (RTX 3070 or better).
-> * **Software:** Ensure NVIDIA drivers are installed on Windows; CUDA will be handled by the Python environment.
->
-> ## Installation
-> 1. Open your Ubuntu/WSL terminal.
-> 2. Ensure you have Conda installed.
-> 3. Create the environment: `conda create -n amanai python=3.10 -y && conda activate amanai`.
-> 4. Run `bash setup.sh`.
+## System Requirements
+ * **OS:** Windows 10/11 with WSL2 (Windows Subsystem for Linux) **highly recommended**.
+ * **GPU:** NVIDIA GPU with at least 8GB VRAM.
+ * **Software:** Ensure NVIDIA drivers are installed on Windows; CUDA will be handled by the Python environment.
+
+## Installation
+ 1. Open your Ubuntu/WSL terminal.
+ 2. Ensure you have Conda installed.
+ 3. Create the environment: `conda create -n amanai python=3.10 -y && conda activate amanai`.
+ 4. Run `bash setup.sh`.
 
 ## Fine-Tuning
 

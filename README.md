@@ -54,51 +54,17 @@ AmanAI/
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.12+
-- CUDA GPU (recommended for full LLM) or CPU (uses 1B fallback model)
-- Docker (optional)
-
-### Local Setup (Laptop — CPU mode)
-
-```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-python -m spacy download en_core_web_lg
-
-# Copy environment config
-cp .env.example .env
-
-# Run the application (CPU fallback model will be used automatically)
-streamlit run app.py
-```
-
-### Docker Setup
-
-```bash
-docker compose up --build
-# Access at http://localhost:8501
-```
-
-### Hydra Cluster (GPU — Full Quality)
-
-```bash
-# 1. SSH into Hydra and clone the repo
-# 2. Set up the mamba environment (run once)
-bash scripts/setup_hydra.sh
-
-# 3. Submit fine-tuning job
-sbatch scripts/finetune.sh
-# Output: data/lora_adapter/ — set LORA_ADAPTER_PATH in .env
-
-# 4. Run the Streamlit app on a GPU node
-sbatch scripts/run_app.sh
-# Then SSH tunnel: ssh -L 8501:NODE:8501 user@hydra.seecs.edu.pk
-```
+**Add this section to your README:**
+> ## System Requirements
+> * **OS:** Windows 10/11 with WSL2 (Windows Subsystem for Linux) **highly recommended**.
+> * **GPU:** NVIDIA GPU with at least 8GB VRAM (RTX 3070 or better).
+> * **Software:** Ensure NVIDIA drivers are installed on Windows; CUDA will be handled by the Python environment.
+>
+> ## Installation
+> 1. Open your Ubuntu/WSL terminal.
+> 2. Ensure you have Conda installed.
+> 3. Create the environment: `conda create -n amanai python=3.10 -y && conda activate amanai`.
+> 4. Run `bash setup.sh`.
 
 ## Fine-Tuning
 
@@ -156,8 +122,8 @@ All settings are centralized in `config.py` and can be overridden via environmen
 | `CHUNK_SIZE` | `512` | Document chunk size |
 | `BM25_WEIGHT` | `0.4` | BM25 weight in hybrid retrieval |
 | `VECTOR_WEIGHT` | `0.6` | Vector weight in hybrid retrieval |
-| `RETRIEVAL_TOP_K` | `10` | Candidates from retrieval |
-| `RERANK_TOP_K` | `5` | Final documents after re-ranking |
+| `RETRIEVAL_TOP_K` | `5` | Candidates from retrieval |
+| `RERANK_TOP_K` | `2` | Final documents after re-ranking |
 
 ## License
 

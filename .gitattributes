@@ -1,0 +1,2 @@
+data/lora_adapter/*.bin filter=lfs diff=lfs merge=lfs -text
+data/lora_adapter/*.safetensors filter=lfs diff=lfs merge=lfs -text

@@ -33,22 +33,22 @@ CPU_FALLBACK_MODEL = os.getenv(
 )
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", "512"))
-LORA_ADAPTER_PATH = os.getenv("LORA_ADAPTER_PATH", "")
+LORA_ADAPTER_PATH = os.getenv("LORA_ADAPTER_PATH", "data/lora_adapter")
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cuda")
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "512"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "256"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "20"))
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "nust_bank_docs")
 BM25_WEIGHT = float(os.getenv("BM25_WEIGHT", "0.4"))
 VECTOR_WEIGHT = float(os.getenv("VECTOR_WEIGHT", "0.6"))
-RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "10"))
-RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "5"))
+RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "3"))
+RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "1"))
 
 # ── Guardrails ────────────────────────────────────────────────────────────────
 MAX_INPUT_LENGTH = int(os.getenv("MAX_INPUT_LENGTH", "1000"))

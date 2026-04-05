@@ -16,6 +16,8 @@ data/processed/
 *.safetensors
 *.gguf
 scripts/
+unsloth_compiled_cache/
+data/lora_adapter/checkpoint-*/
 
 # Environment
 .env

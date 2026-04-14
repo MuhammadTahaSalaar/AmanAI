@@ -277,6 +277,9 @@ def _handle_admin_upload(uploaded_file) -> None:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
 
+        # Record count before parsing so we can get only the newly added docs
+        prev_count = sess_docs.get_document_count()
+
         success, message = sess_docs.parse_and_add_file(tmp_path)
         
         # Clean up
@@ -287,21 +290,17 @@ def _handle_admin_upload(uploaded_file) -> None:
             st.sidebar.success(f" {message}")
             logger.info("Admin uploaded document: %s", uploaded_file.name)
             
-            # Get the newly added documents
-            new_documents = sess_docs.get_documents()
+            # Get only the newly added documents (avoid re-indexing old ones)
+            all_session_docs = sess_docs.get_documents()
+            new_documents = all_session_docs[prev_count:]
             
-            # Update RAG chain's retriever indexes with session documents
-            if "rag_chain" in st.session_state and st.session_state["rag_chain"] is not None:
+            # Update RAG chain's retriever indexes with only the new documents
+            if new_documents and "rag_chain" in st.session_state and st.session_state["rag_chain"] is not None:
                 try:
                     st.session_state["rag_chain"].update_retriever_with_documents(new_documents)
-                    logger.info("Updated RAG chain retriever with %d session documents", len(new_documents))
+                    logger.info("Updated RAG chain retriever with %d new session documents", len(new_documents))
                 except Exception as e:
                     logger.error("Failed to update RAG chain retriever: %s", str(e))
-            
-            # Force RAG chain rebuild to include new docs
-            # Note: Keeping this as a safety measure for other components
-            if "rag_chain" in st.session_state:
-                del st.session_state["rag_chain"]
         else:
             st.sidebar.error(f" {message}")
     except Exception as e:
@@ -421,16 +420,10 @@ def main() -> None:
         else:
             # Generate response with full RAG pipeline
             with st.spinner("Searching knowledge base..."):
-                # Get session documents if admin
-                session_docs_to_use = None
-                session_docs_manager = st.session_state.get("session_docs")
-                if session_docs_manager and session_docs_manager.get_document_count() > 0:
-                    session_docs_to_use = session_docs_manager.get_documents()
-                
                 raw_response, retrieved_docs = rag_chain.query(
                     user_query=sanitized,
                     chat_history=st.session_state["messages"][:-1],
-                    session_documents=session_docs_to_use,
+                    session_documents=None,  # Session documents are already indexed via upload handler
                 )
                 response = safety.sanitize_output(raw_response)
 

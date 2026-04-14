@@ -62,15 +62,21 @@ class ETLPipeline:
         all_documents.extend(json_docs)
         self._save(json_docs, "app_faq_documents.json")
 
-        # 4. Merged output
+        # 4. Runtime documents (e.g., special offers, dynamic content)
+        runtime_docs = self._process_runtime_documents()
+        all_documents.extend(runtime_docs)
+        logger.info("Loaded %d runtime documents", len(runtime_docs))
+
+        # 5. Merged output
         self._save(all_documents, "all_documents.json")
 
         logger.info(
-            "ETL complete: %d total documents (rate=%d, faq=%d, json=%d)",
+            "ETL complete: %d total documents (rate=%d, faq=%d, json=%d, runtime=%d)",
             len(all_documents),
             len(rate_docs),
             len(faq_docs),
             len(json_docs),
+            len(runtime_docs),
         )
         return all_documents
 
@@ -104,6 +110,59 @@ class ETLPipeline:
             return []
         processor = JSONProcessor(file_path=self._json_path)
         return processor.process()
+
+    def _process_runtime_documents(self) -> list[Document]:
+        """Process runtime documents from data/runtime_document directory.
+        
+        Runtime documents are special offers, dynamic content, and other
+        documents that are loaded at runtime but should be part of the
+        knowledge base.
+        
+        Returns:
+            List of Document objects from runtime documents.
+        """
+        documents: list[Document] = []
+        runtime_dir = Path("data/runtime_document")
+        
+        if not runtime_dir.exists():
+            logger.info("Runtime document directory not found: %s", runtime_dir)
+            return documents
+        
+        # Process all JSON files in the runtime_document directory
+        for json_file in runtime_dir.glob("*.json"):
+            try:
+                with open(json_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                # Handle FAQ-format JSON with categories
+                if isinstance(data, dict) and "categories" in data:
+                    for category in data.get("categories", []):
+                        category_name = category.get("category", "Runtime Document")
+                        for qa in category.get("questions", []):
+                            question = qa.get("question", "").strip()
+                            answer = qa.get("answer", "").strip()
+                            
+                            if question and answer:
+                                content = f"Q: {question}\nA: {answer}"
+                                # Prefix with product/category name
+                                content = f"[{category_name}]\n{content}"
+                                documents.append(
+                                    Document(
+                                        content=content,
+                                        metadata={
+                                            "product": category_name,
+                                            "source": json_file.name,
+                                            "type": "runtime_qa",
+                                        },
+                                    )
+                                )
+                
+                logger.info("Processed runtime document: %s (%d Q&As)", json_file.name, len(documents))
+            except Exception as e:
+                logger.error("Failed to process runtime document %s: %s", json_file.name, e)
+                continue
+        
+        return documents
 
     def _save(self, documents: list[Document], filename: str) -> None:
         """Save processed documents to a JSON file."""

@@ -115,11 +115,12 @@ class ModelLoader:
             self._model = self._model.merge_and_unload()
         logger.info("LoRA adapter merged successfully")
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str | list) -> str:
         """Generate a response for the given prompt.
 
         Args:
-            prompt: The full prompt string (system + context + query).
+            prompt: Either a raw prompt string, or a list of message dicts
+                    [{"role": ..., "content": ...}] for apply_chat_template.
 
         Returns:
             The generated text response.
@@ -127,7 +128,17 @@ class ModelLoader:
         if self._model is None or self._tokenizer is None:
             self.load()
 
-        inputs = self._tokenizer(prompt, return_tensors="pt", truncation=True)
+        # Convert messages list → tokenized string via chat template
+        if isinstance(prompt, list):
+            prompt_str = self._tokenizer.apply_chat_template(
+                prompt,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            prompt_str = prompt
+
+        inputs = self._tokenizer(prompt_str, return_tensors="pt", truncation=True)
         inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
 
         with torch.no_grad():

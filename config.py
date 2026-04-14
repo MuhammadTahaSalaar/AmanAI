@@ -52,7 +52,7 @@ RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "5"))
 
 # ── Guardrails ────────────────────────────────────────────────────────────────
 MAX_INPUT_LENGTH = int(os.getenv("MAX_INPUT_LENGTH", "1000"))
-CHAT_HISTORY_TURNS = int(os.getenv("CHAT_HISTORY_TURNS", "5"))
+CHAT_HISTORY_TURNS = int(os.getenv("CHAT_HISTORY_TURNS", "3"))
 
 # ── Rate Sheet ────────────────────────────────────────────────────────────────
 RATE_SHEET_NAME = "Rate Sheet July 1 2024"

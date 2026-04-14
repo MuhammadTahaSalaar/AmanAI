@@ -172,6 +172,12 @@ class PIIAnonymizer:
             entities=["PERSON"],
             score_threshold=0.85,
         )
+        # Filter out short PERSON entities (< 4 chars) to avoid false positives
+        # on banking abbreviations like "SE" (Small Enterprise), "ME" (Medium Enterprise)
+        person_results = [
+            r for r in person_results
+            if (r.end - r.start) >= 4
+        ]
         results = results + person_results
 
         if results:

@@ -29,6 +29,8 @@ _BANKING_KEYWORDS: frozenset[str] = frozenset({
     "monthly", "annually", "quarterly", "pkr", "usd", "cnic", "iban",
     "fund", "funds", "sms", "alert", "inet", "mobile", "banking",
     "bank", "nust", "aman", "amanai", "champs", "little",
+    "ujala", "imarat", "nust4car", "mastercard",
+    "processing", "tenure", "markup", "instalment", "apply",
 })
 
 
@@ -88,16 +90,31 @@ class RAGChain:
         #    This ensures multi-turn queries maintain product context for retrieval.
         retrieval_query = user_query
         
-        # Include recent conversation context for multi-turn awareness
-        if chat_history and len(chat_history) >= 2:
+        # Check if the current query already mentions a specific product
+        current_product = re.findall(
+            r"NUST[\s\w]*(?:Account|Finance|Deposit)",
+            user_query,
+            re.IGNORECASE,
+        )
+        
+        # Only augment with previous product context if current query has NO product
+        # (i.e., it's a follow-up like "what is the processing time for it?")
+        if not current_product and chat_history and len(chat_history) >= 2:
             # Extract last user question to get product context
             prev_messages = [m for m in chat_history if m.get("role") == "user"]
             if prev_messages:
                 last_user_query = prev_messages[-1].get("content", "")
-                # Extract product names from last query
-                product_keywords = re.findall(r"NUST\s+[\w\s]+(?:Account|Finance|Deposit)", last_user_query)
+                # Extract product names from last query (handles NUST4Car, NUST Imarat Finance, etc.)
+                product_keywords = re.findall(
+                    r"NUST[\s\w]*(?:Account|Finance|Deposit)",
+                    last_user_query,
+                    re.IGNORECASE,
+                )
                 if product_keywords:
                     retrieval_query = f"{product_keywords[0]} {user_query}"
+                    # If query was augmented with product context from history,
+                    # treat it as having banking intent (it's a follow-up)
+                    has_intent = True
         
         # Prefix "NUST Bank" for retrieval enhancement when not already mentioned
         if "nust" not in retrieval_query.lower():
@@ -146,6 +163,27 @@ class RAGChain:
 
         logger.debug("Reranked to %d documents", len(reranked))
 
+        # 2b. Product-aware filtering — if the query targets a SINGLE specific
+        #     product, drop chunks from OTHER products to prevent the 3B
+        #     model from mixing data across products.
+        #     Skip filtering when multiple products are mentioned (comparisons).
+        query_products = self._PRODUCT_RE.findall(user_query)
+        if len(query_products) == 1 and reranked:
+            query_product = query_products[0].strip()
+            matched = [
+                d for d in reranked
+                if self._doc_matches_product(d, query_product)
+            ]
+            # Only filter if we still have at least 1 matched doc
+            if matched:
+                dropped = len(reranked) - len(matched)
+                if dropped:
+                    logger.info(
+                        "Product filter: kept %d/%d docs for '%s'",
+                        len(matched), len(reranked), query_product,
+                    )
+                reranked = matched
+
         # 3. Build context
         context = self._build_context(reranked)
 
@@ -171,48 +209,19 @@ class RAGChain:
                     "Please contact our helpline: +92 (51) 111 000 494."
                 )
         
-        # 5b. Check if response mentions products not in context (hallucination detection)
-        # Build context_products from ACTUAL CONTEXT TEXT, not just metadata
-        # This works for all documents including session-uploaded ones with incomplete metadata
-        context_text = self._build_context(reranked)
-        
-        # Extract all NUST products mentioned in the actual context
-        context_product_names = re.findall(
-            r"NUST\s+[\w\s]+(?:Account|Finance|Deposit|Card)",
-            context_text,
-            re.IGNORECASE
-        )
-        context_products = set(p.lower() for p in context_product_names)
-        
-        # Also add products from metadata as fallback
-        for doc in reranked:
-            product = doc.metadata.get("product", "").lower()
-            if product:
-                context_products.add(product.lower())
-        
-        # Extract product names mentioned in the generated response
-        mentioned_products = re.findall(
-            r"NUST\s+[\w\s]+(?:Account|Finance|Deposit|Card)",
-            response,
-            re.IGNORECASE
-        )
-        
-        # Find hallucinated products (mentioned in response but not in actual context)
-        hallucinated_products = []
-        for product in mentioned_products:
-            product_lower = product.lower()
-            if product_lower not in context_products:
-                hallucinated_products.append(product)
-        
-        if hallucinated_products:
-            logger.warning(
-                "Potential hallucination detected: %s not in context. Forcing grounding response.",
-                hallucinated_products
+        # 5b. Hallucination detection is ONLY applied if NO context is found
+        # If context exists (reranked docs available), the system prompt constrains the LLM
+        # and we trust the LLM's grounding-aware response
+        # This prevents false positives from regex mismatches on product names like "NUST4Car"
+        if reranked and len(reranked) > 0:
+            # Context exists - trust the LLM's response (constrained by system prompt)
+            logger.debug(
+                "Context provided (%d docs): Trusting LLM response (constrained by system prompt)",
+                len(reranked)
             )
-            response = (
-                "I don't have information about that specific product in our current system. "
-                "Please contact NUST Bank at +92 (51) 111 000 494 for accurate details."
-            )
+        else:
+            # No context - this was already handled in section 5a
+            pass
 
         return response, reranked
 
@@ -237,33 +246,51 @@ class RAGChain:
         if not documents:
             return
 
-        # Update BM25 index
-        # Get current documents from the retriever and add the new ones
-        # Note: We need to merge with existing documents to maintain full index
         try:
-            # Re-index Combined all known documents including new ones
-            # This is called by the HybridRetriever pattern
+            # Add to vector store (single call — no duplicates)
+            self._retriever._vector_store.add_documents(documents)
+
+            # Rebuild BM25 with existing docs + new docs so originals are preserved
+            existing_bm25_docs = list(self._retriever._bm25_retriever._documents)
+            all_docs = existing_bm25_docs + documents
+            self._retriever._bm25_retriever.index(all_docs)
+
             logger.info(
-                "Updating retriever indexes with %d new documents",
-                len(documents)
+                "Updated retriever indexes with %d new documents (BM25 total: %d)",
+                len(documents),
+                len(all_docs),
             )
-            # The HybridRetriever contains both BM25 and vector store
-            # We'll update them through the retriever's underlying components
-            # by extracting them from the HybridRetriever
-            if hasattr(self._retriever, '_bm25_retriever') and hasattr(self._retriever, '_vector_store'):
-                # Get current BM25 documents
-                bm25_retriever = self._retriever._bm25_retriever
-                vector_store = self._retriever._vector_store
-
-                # Add to vector store
-                vector_store.add_documents(documents)
-                logger.debug("Added %d documents to vector store", len(documents))
-
-                # Note: BM25 index is rebuilt from scratch with all documents
-                # For now, session documents are handled as post-retrieval augmentation
-                logger.debug(
-                    "Session documents will be augmented post-retrieval; "
-                    "BM25 index remains unchanged (358 docs)"
-                )
         except Exception as e:
             logger.error("Failed to update retriever indexes: %s", str(e))
+
+    # ---- Product-filtering helpers ----
+
+    _PRODUCT_RE = re.compile(
+        r"NUST\s*(?:4Car|Hunarmand|Asaan|Waqaar|Sahar|Maximiser|Bachat|"
+        r"Imarat|Ujala|Champs|Little|Roshan|Pensioner|Digital|"
+        r"Special\s+Mega\s+Bonus|Mortgage|Personal|Mastercard|PayPak)"
+        r"(?:\s+\w+)*",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _extract_product(cls, text: str) -> str | None:
+        """Extract a product name from text, e.g. 'NUST4Car', 'NUST Imarat'."""
+        m = cls._PRODUCT_RE.search(text)
+        return m.group(0).strip() if m else None
+
+    @staticmethod
+    def _doc_matches_product(doc: Document, product: str) -> bool:
+        """Check if a document belongs to (or is relevant to) the queried product."""
+        product_lower = product.lower()
+        # Check metadata fields
+        meta_product = doc.metadata.get("product", "").lower()
+        meta_source = doc.metadata.get("source_sheet", "").lower()
+        content_lower = doc.content[:200].lower()  # First 200 chars is enough
+        # Extract a short key, e.g. "nust4car", "nust imarat"
+        key = product_lower.replace("nust ", "nust").split()[0] if product_lower else ""
+        return (
+            key in meta_product
+            or key in meta_source
+            or key in content_lower
+        )

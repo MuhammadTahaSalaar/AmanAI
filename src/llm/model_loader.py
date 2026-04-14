@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
+import warnings
+from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import config
 from src.utils.logger import setup_logger
-
-from pathlib import Path
 
 
 logger = setup_logger(__name__)
@@ -82,11 +82,11 @@ class ModelLoader:
             bnb_4bit_use_double_quant=True,
         )
         self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
+        # Note: Don't pass dtype when using quantization_config; the config specifies compute dtype
         self._model = AutoModelForCausalLM.from_pretrained(
             self._model_name,
             quantization_config=quantization_config,
             device_map="auto",
-            dtype=torch.float16,
         )
 
     def _load_cpu(self) -> None:
@@ -108,8 +108,11 @@ class ModelLoader:
         from peft import PeftModel
 
         logger.info("Loading LoRA adapter from: %s", self._lora_path)
-        self._model = PeftModel.from_pretrained(self._model, self._lora_path)
-        self._model = self._model.merge_and_unload()
+        with warnings.catch_warnings():
+            # Suppress warning about merging LoRA to 4-bit model
+            warnings.filterwarnings("ignore", message=".*Merge lora module to 4-bit.*")
+            self._model = PeftModel.from_pretrained(self._model, self._lora_path)
+            self._model = self._model.merge_and_unload()
         logger.info("LoRA adapter merged successfully")
 
     def generate(self, prompt: str) -> str:

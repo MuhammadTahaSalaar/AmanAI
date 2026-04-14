@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 from flashrank import Ranker, RerankRequest
 
@@ -28,7 +29,14 @@ class Reranker:
 
     def __init__(self, top_k: int | None = None) -> None:
         self._top_k = top_k or config.RERANK_TOP_K
-        self._ranker = Ranker()
+        # Suppress flashrank progress and download messages
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            flashrank_logger = logging.getLogger("flashrank.Ranker")
+            old_level = flashrank_logger.level
+            flashrank_logger.setLevel(logging.ERROR)
+            self._ranker = Ranker()
+            flashrank_logger.setLevel(old_level)
         logger.info("Reranker initialized (top_k=%d)", self._top_k)
 
     def rerank(

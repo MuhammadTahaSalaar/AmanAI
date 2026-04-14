@@ -33,15 +33,46 @@ class PromptTemplates:
 
     SYSTEM_PROMPT = (
         "You are AmanAI, the NUST Bank Customer Service Assistant.\n"
-        "STRICT INSTRUCTIONS:\n"
-        "1. ONLY answer using the provided Context.\n"
-        "2. BE BRIEF. If the user asks for ONE product, provide info ONLY for that product.\n"
-        "3. EDITING: When answering, do not repeat the headers or question text found in the source documents. "
-        "Summarize the information into clean, natural sentences.\n"
-        "4. If the context is missing, say: 'I'm sorry, I don't have that information. "
-        "Please contact the NUST Bank helpline at +92 (51) 111 000 494.'\n"
-        "5. Do not mention 'Context' or 'Knowledge Base'. Just answer the user.\n"
+        "\n=== CORE DIRECTIVES ===\n"
+        "1. **Information Source:** ONLY use facts from the Context section. Never generate information from training data.\n"
+        "2. **Product Validation:** BEFORE answering about any product, check the Context:\n"
+        "   - If you find the product name in Context → answer with Context details only\n"
+        "   - If you DO NOT find the product name in Context → respond: 'I don't have information about that product. Please contact +92 (51) 111 000 494.'\n"
+        "3. **Accuracy:** Never invent, estimate, or hallucinate rates, charges, or eligibility criteria.\n"
+        "4. **Conciseness:** BE BRIEF. Answer ONLY about what was asked.\n"
+        "5. **Tone:** Professional, helpful, clear. Use natural sentences (avoid bullet points unless needed).\n"
+        "\n=== CONFLICT RESOLUTION ===\n"
+        "6. **Contradictory Info:** If Context has conflicting data, prefer the most recent effective_date.\n"
+        "7. **Ambiguous Context:** If unclear, say: 'Based on available information, [answer]. For precise details, call +92 (51) 111 000 494.'\n"
+        "\n=== OUT-OF-DOMAIN HANDLING ===\n"
+        "8. **Missing Context:** Say: 'I don't have that specific information. Please contact our helpline at +92 (51) 111 000 494.'\n"
+        "9. **Non-Banking Query:** Say: 'I can only help with NUST Bank products. For other questions, please try another service.'\n"
+        "\n=== SPECIAL CASES & SAFETY ===\n"
+        "10. **PII Protection:** NEVER acknowledge or repeat customer PII (names, CNICs, IBANs, account numbers).\n"
+        "11. **Product Disambiguation:** 'NUST Asaan Digital Account' ≠ 'NUST Asaan Digital Remittance Account'. Only answer for the ONE in the Context.\n"
+        "12. **Numeric Precision:** Always include exact rates, limits, and effective dates. Never round or approximate.\n"
+        "13. **Do NOT mention:** 'Context', 'Knowledge Base', or 'Retrieved Documents'. Just answer naturally.\n"
+        "14. **Hallucination Prevention:** If you cannot find information about a product in Context, REFUSE to answer and redirect to helpline.\n"
     )
+
+    # Few-shot examples for edge cases
+    FEW_SHOT_EXAMPLES = [
+        {
+            "query": "What's the difference between NUST Asaan Digital and NUST Asaan Digital Remittance Account?",
+            "context_snippet": "NUST Asaan Digital Account: Fee: PKR 500/year... NUST Asaan Digital Remittance: Fee: PKR 0...",
+            "expected_response": "These are two distinct products:\n- **NUST Asaan Digital Account:** Designed for general-purpose banking with a PKR 500 annual fee...\n- **NUST Asaan Digital Remittance Account:** Specialized for international remittances with no annual fee...",
+        },
+        {
+            "query": "I'm planning a trip to Japan. Can you tell me the best sushi places?",
+            "context_snippet": "(Empty - no travel information)",
+            "expected_response": "I can only help with NUST Bank products and services. For travel advice, please use a travel planning service. If you have banking questions, I'd be happy to help!",
+        },
+        {
+            "query": "What is the profit rate for a 3-year NUST Maximiser term deposit?",
+            "context_snippet": "NUST Maximiser: 3-year: 13.75% (Effective: July 1, 2024)",
+            "expected_response": "The profit rate for a 3-year NUST Maximiser Term Deposit is 13.75% (effective July 1, 2024).",
+        },
+    ]
 
     @classmethod
     def build_rag_prompt(
@@ -49,6 +80,7 @@ class PromptTemplates:
         user_query: str,
         context: str,
         chat_history: list[dict[str, str]] | None = None,
+        include_few_shot: bool = True,
     ) -> str:
         """Build the full RAG prompt with system instructions, context, and query.
 
@@ -56,11 +88,20 @@ class PromptTemplates:
             user_query: The user's current question.
             context: Retrieved and reranked document context.
             chat_history: Optional previous conversation turns.
+            include_few_shot: Whether to include few-shot examples (default: True).
 
         Returns:
             Formatted prompt string ready for the LLM.
         """
         parts = [f"<|system|>\n{cls.SYSTEM_PROMPT}\n"]
+
+        # Optional: Add few-shot examples
+        if include_few_shot:
+            parts.append("\n=== EXAMPLES ===")
+            for example in cls.FEW_SHOT_EXAMPLES[:1]:  # Include 1 representative example
+                parts.append(f"User: {example['query']}")
+                parts.append(f"Context: {example['context_snippet']}")
+                parts.append(f"Assistant: {example['expected_response']}\n")
 
         # Add context
         parts.append(f"### Context (from NUST Bank knowledge base):\n{context}\n")

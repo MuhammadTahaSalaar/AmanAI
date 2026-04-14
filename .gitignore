@@ -18,6 +18,7 @@ data/processed/
 scripts/
 unsloth_compiled_cache/
 data/lora_adapter/checkpoint-*/
+documents/
 
 # Environment
 .env

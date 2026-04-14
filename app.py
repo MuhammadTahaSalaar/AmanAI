@@ -3,12 +3,63 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import sys
+import warnings
 from pathlib import Path
+from io import StringIO
+
+# Suppress non-critical warnings for cleaner startup
+# ONNX Runtime GPU discovery (expected in WSL)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TRANSFORMERS_VERBOSITY"] = "critical"
+
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers.quantizers")
+warnings.filterwarnings("ignore", category=FutureWarning, module="bitsandbytes")
+warnings.filterwarnings("ignore", message=".*__path__.*models.*image_processing.*")
+
+# Suppress Presidio language registry warnings
+presidio_logger = logging.getLogger("presidio-analyzer")
+presidio_logger.setLevel(logging.ERROR)
+
+
+# Custom stderr wrapper to filter transformers __path__ messages
+class FilteredStderr:
+    """Filters out harmless transformers __path__ messages from stderr."""
+    
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        self.buffer = ""
+    
+    def write(self, message: str) -> int:
+        """Filter and write to stderr."""
+        # Skip the transformers __path__ aliasing messages completely
+        if "Accessing `__path__`" in message and "image_processing" in message:
+            return len(message)
+        # Skip GPU discovery errors from ONNX  
+        if "GPU device discovery failed" in message:
+            return len(message)
+        # Pass everything else through
+        self.original_stderr.write(message)
+        return len(message)
+    
+    def flush(self):
+        self.original_stderr.flush()
+    
+    def __getattr__(self, name):
+        return getattr(self.original_stderr, name)
+
+
+# Apply stderr filter before any imports
+sys.stderr = FilteredStderr(sys.stderr)
 
 import streamlit as st
 import torch
 
 import config
+from src.auth.auth_manager import AuthManager
+from src.auth.session_manager import SessionDocumentManager
 from src.data_processing.base_processor import Document
 from src.data_processing.etl_pipeline import ETLPipeline
 from src.rag_engine.embedder import Embedder
@@ -101,11 +152,61 @@ def _build_rag_chain(
     )
 
 
+# ── Authentication & Session Management ──────────────────────────────────────
+def _render_login_screen() -> None:
+    """Render the login screen."""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title(f"{config.APP_ICON} AmanAI")
+        st.markdown("## Login")
+        st.caption("*NUST Bank Customer Service Chatbot*")
+        st.divider()
+        
+        # Username selection
+        username = st.selectbox(
+            "Select Account",
+            [config.GUEST_USER, config.ADMIN_USER],
+            format_func=lambda x: f"{x.capitalize()} Account",
+        )
+        
+        # Password input (only for admin)
+        password = ""
+        if username == config.ADMIN_USER:
+            password = st.text_input("Password", type="password")
+        
+        # Login button
+        if st.button("Login", use_container_width=True, type="primary"):
+            auth_manager = AuthManager()
+            is_valid, error_msg = auth_manager.authenticate(username, password)
+            
+            if is_valid:
+                st.session_state["authenticated"] = True
+                st.session_state["username"] = username
+                st.session_state["is_admin"] = auth_manager.is_admin(username)
+                st.session_state["session_docs"] = SessionDocumentManager()
+                st.session_state["messages"] = []
+                logger.info("User %s logged in", username)
+                st.rerun()
+            else:
+                st.error(f" {error_msg}")
+        
+        st.divider()
+        st.caption("**Guest:** No password required\n**Admin:** Password required")
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 def _render_sidebar() -> None:
-    """Render sidebar with info and document upload."""
+    """Render sidebar with info, user details, document upload, and logout."""
     with st.sidebar:
         st.title(f"{config.APP_ICON} {config.APP_TITLE}")
+        
+        # User info
+        username = st.session_state.get("username", "Unknown")
+        is_admin = st.session_state.get("is_admin", False)
+        user_badge = "👤 Admin" if is_admin else "👁️ Guest"
+        st.markdown(f"**{user_badge}** · `{username}`")
+        st.divider()
+        
         st.markdown(
             "Welcome to **AmanAI**, your intelligent banking assistant.\n\n"
             "Ask me about savings accounts, term deposits, fund transfers, "
@@ -113,91 +214,113 @@ def _render_sidebar() -> None:
         )
         st.divider()
 
-        # Document upload for real-time ingestion
-        st.subheader("Upload New Documents")
-        st.caption(
-            "Add new FAQs or policy documents to the knowledge base instantly. "
-            "Supports JSON (structured Q&A) or plain text (.txt)."
-        )
-        uploaded = st.file_uploader(
-            "Choose a file",
-            type=["json", "txt"],
-            key="doc_upload",
-        )
-        if uploaded is not None:
-            _handle_upload(uploaded)
+        # Document upload for admin only
+        if is_admin:
+            st.subheader("📤 Add Documents (Admin)")
+            st.caption(
+                "Upload new FAQs or documents to the knowledge base. "
+                "Changes persist for this session only. "
+                "Supports JSON (structured Q&A) or plain text (.txt)."
+            )
+            uploaded = st.file_uploader(
+                "Choose a file",
+                type=["json", "txt"],
+                key="doc_upload",
+            )
+            if uploaded is not None:
+                _handle_admin_upload(uploaded)
+            
+            sess_docs = st.session_state.get("session_docs")
+            if sess_docs and sess_docs.get_document_count() > 0:
+                st.success(
+                    f" {sess_docs.get_document_count()} session document(s) loaded"
+                )
+            st.divider()
 
-        st.divider()
-        if st.button("Clear Chat History", use_container_width=True):
+        # Chat history clear
+        if st.button("🗑️ Clear Chat History", use_container_width=True):
             st.session_state["messages"] = []
+            st.rerun()
+        
+        st.divider()
+        
+        # Logout button
+        if st.button("🚪 Logout", use_container_width=True, type="secondary"):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = ""
+            st.session_state["is_admin"] = False
+            st.session_state["session_docs"] = None
+            st.session_state["messages"] = []
+            logger.info("User logged out")
             st.rerun()
 
 
-def _handle_upload(uploaded_file) -> None:
-    """Process an uploaded JSON or TXT file and add to the knowledge base."""
+def _handle_admin_upload(uploaded_file) -> None:
+    """Process an uploaded JSON or TXT file for admin and add to session documents."""
+    sess_docs = st.session_state.get("session_docs")
+    if not sess_docs:
+        st.sidebar.error("Session document manager not initialized")
+        return
+
+    # Track processed files to prevent re-processing on rerun
+    if "processed_uploads" not in st.session_state:
+        st.session_state["processed_uploads"] = set()
+    
+    file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+    if file_id in st.session_state["processed_uploads"]:
+        return  # Skip duplicate processing
+    
     try:
-        raw = uploaded_file.read()
-        filename = uploaded_file.name
-        new_docs: list[Document] = []
+        # Save to temp file and parse
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.name) as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
 
-        if filename.endswith(".json"):
-            data = json.loads(raw.decode("utf-8"))
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and "content" in item:
-                        new_docs.append(Document.from_dict(item))
-            elif isinstance(data, dict) and "content" in data:
-                new_docs.append(Document.from_dict(data))
-
-        elif filename.endswith(".txt"):
-            text = raw.decode("utf-8").strip()
-            if text:
-                # Split on double-newlines to create paragraph-level documents
-                paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-                for para in paragraphs:
-                    new_docs.append(
-                        Document(
-                            content=para,
-                            metadata={"source": filename, "type": "uploaded_document"},
-                        )
-                    )
-
-        if new_docs:
-            vs = st.session_state.get("vector_store")
-            if vs:
-                vs.add_documents(new_docs)
-                # Also re-index BM25 with new docs appended
-                if "documents" in st.session_state:
-                    st.session_state["documents"].extend(new_docs)
-                    # Trigger BM25 rebuild on next interaction
-                    if "rag_chain" in st.session_state:
-                        del st.session_state["rag_chain"]
-                st.sidebar.success(
-                    f"✅ Added {len(new_docs)} document(s) from **{filename}**. "
-                    "You can now ask questions about this content."
-                )
-                logger.info("Uploaded %d docs from %s", len(new_docs), filename)
+        success, message = sess_docs.parse_and_add_file(tmp_path)
+        
+        # Clean up
+        Path(tmp_path).unlink()
+        
+        if success:
+            st.session_state["processed_uploads"].add(file_id)
+            st.sidebar.success(f" {message}")
+            logger.info("Admin uploaded document: %s", uploaded_file.name)
+            
+            # Get the newly added documents
+            new_documents = sess_docs.get_documents()
+            
+            # Update RAG chain's retriever indexes with session documents
+            if "rag_chain" in st.session_state and st.session_state["rag_chain"] is not None:
+                try:
+                    st.session_state["rag_chain"].update_retriever_with_documents(new_documents)
+                    logger.info("Updated RAG chain retriever with %d session documents", len(new_documents))
+                except Exception as e:
+                    logger.error("Failed to update RAG chain retriever: %s", str(e))
+            
+            # Force RAG chain rebuild to include new docs
+            # Note: Keeping this as a safety measure for other components
+            if "rag_chain" in st.session_state:
+                del st.session_state["rag_chain"]
         else:
-            st.sidebar.warning("No valid documents found in the uploaded file.")
-    except (json.JSONDecodeError, KeyError, UnicodeDecodeError) as e:
-        st.sidebar.error(f"Failed to parse uploaded file: {e}")
+            st.sidebar.error(f" {message}")
+    except Exception as e:
+        st.sidebar.error(f" Error uploading file: {str(e)}")
+        logger.error("Admin upload failed: %s", str(e))
 
 
 # ── Main Chat Interface ─────────────────────────────────────────────────────
 def main() -> None:
     """Main application entry point."""
+    # Check if user is authenticated
+    if not st.session_state.get("authenticated", False):
+        _render_login_screen()
+        return
+
+    # User is authenticated, show chat interface
     _render_sidebar()
 
-    # Initialize session state
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
-
-    # Hardware info banner
-    gpu_info = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU only"
-    model_label = config.LLM_MODEL_NAME if torch.cuda.is_available() else config.CPU_FALLBACK_MODEL
-    st.caption(f"🖥️ Running on: **{gpu_info}** | Model: `{model_label}`")
-
-    # Load components
+    # Load components (cached)
     embedder = _load_embedder()
     vector_store = _load_vector_store(embedder)
     st.session_state["vector_store"] = vector_store
@@ -210,7 +333,12 @@ def main() -> None:
         st.warning(
             "⚠️ LLM could not be loaded on this machine. "
             "Responses will show retrieved context only. "
-            "For full generation, run on Hydra (`sbatch scripts/run_app.slurm`)."
+        )
+    else:
+        device_info = "🖥️ GPU (CUDA)" if torch.cuda.is_available() else "💻 CPU"
+        st.success(
+            f"LLM loaded successfully on {device_info} | "
+            f"Model: Llama 3.2 3B + QLoRA LoRA adapter"
         )
 
     # Run ETL and index on first load
@@ -270,6 +398,12 @@ def main() -> None:
                 if "nust" not in sanitized.lower():
                     retrieval_q = f"NUST Bank {sanitized}"
                 candidates = hybrid.retrieve(retrieval_q)
+                
+                # Augment with session documents
+                session_docs_list = st.session_state.get("session_docs")
+                if session_docs_list:
+                    candidates.extend(session_docs_list.get_documents())
+                
                 reranked, _ = reranker_tmp.rerank(retrieval_q, candidates)
                 if reranked:
                     ctx_parts = [f"**[{i+1}]** {d.content}" for i, d in enumerate(reranked[:3])]
@@ -287,9 +421,16 @@ def main() -> None:
         else:
             # Generate response with full RAG pipeline
             with st.spinner("Searching knowledge base..."):
+                # Get session documents if admin
+                session_docs_to_use = None
+                session_docs_manager = st.session_state.get("session_docs")
+                if session_docs_manager and session_docs_manager.get_document_count() > 0:
+                    session_docs_to_use = session_docs_manager.get_documents()
+                
                 raw_response, retrieved_docs = rag_chain.query(
                     user_query=sanitized,
                     chat_history=st.session_state["messages"][:-1],
+                    session_documents=session_docs_to_use,
                 )
                 response = safety.sanitize_output(raw_response)
 

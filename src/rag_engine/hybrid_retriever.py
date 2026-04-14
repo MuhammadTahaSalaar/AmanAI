@@ -34,15 +34,19 @@ class HybridRetriever:
         self._bm25_weight = bm25_weight or config.BM25_WEIGHT
         self._vector_weight = vector_weight or config.VECTOR_WEIGHT
 
-    def retrieve(self, query: str, top_k: int | None = None) -> list[Document]:
-        """Retrieve documents using hybrid BM25 + Vector search.
+    def retrieve(self, query: str, top_k: int | None = None, 
+                 product_filter: str | None = None,
+                 source_filter: str | None = None) -> list[Document]:
+        """Retrieve documents using hybrid BM25 + Vector search with optional filtering.
 
         Args:
             query: The search query.
             top_k: Number of top results to return.
+            product_filter: Optional product name filter (e.g., 'NUST Bachat').
+            source_filter: Optional source filter (e.g., 'rate_sheet').
 
         Returns:
-            Merged and re-scored list of Document objects.
+            Merged and re-scored list of Document objects, filtered if specified.
         """
         top_k = top_k or config.RETRIEVAL_TOP_K
 
@@ -72,11 +76,41 @@ class HybridRetriever:
             reverse=True,
         )
 
-        results = [content_to_doc[c] for c in sorted_contents[:top_k]]
+        # Apply metadata filters if specified
+        filtered_results = []
+        for content in sorted_contents:
+            doc = content_to_doc[content]
+            
+            # Check product filter
+            if product_filter:
+                doc_product = doc.metadata.get("product", "").lower()
+                if product_filter.lower() not in doc_product:
+                    continue
+            
+            # Check source filter
+            if source_filter:
+                doc_source = doc.metadata.get("source", "").lower()
+                if source_filter.lower() not in doc_source:
+                    continue
+            
+            filtered_results.append(doc)
+            if len(filtered_results) >= top_k:
+                break
+
+        # If filters removed all results, fallback to unfiltered results
+        if not filtered_results:
+            logger.debug(
+                "Metadata filters removed all results; falling back to unfiltered results"
+            )
+            filtered_results = [content_to_doc[c] for c in sorted_contents[:top_k]]
+
         logger.debug(
-            "Hybrid retrieval: %d vector + %d bm25 → %d merged results",
+            "Hybrid retrieval: %d vector + %d bm25 → %d merged results"
+            " (filters: product=%s, source=%s)",
             len(vector_results),
             len(bm25_results),
-            len(results),
+            len(filtered_results),
+            product_filter,
+            source_filter,
         )
-        return results
+        return filtered_results

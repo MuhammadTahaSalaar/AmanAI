@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 from sentence_transformers import SentenceTransformer
 
@@ -28,7 +29,10 @@ class Embedder:
     ) -> None:
         self._model_name = model_name or config.EMBEDDING_MODEL
         self._device = device or config.EMBEDDING_DEVICE
-        self._model = SentenceTransformer(self._model_name, device=self._device)
+        # Suppress the harmless "UNEXPECTED embedding_s.position_ids" warning from BGE model
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*position_ids.*")
+            self._model = SentenceTransformer(self._model_name, device=self._device)
         logger.info(
             "Embedder initialized: model=%s, device=%s",
             self._model_name,

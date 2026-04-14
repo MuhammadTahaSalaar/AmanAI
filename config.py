@@ -48,7 +48,7 @@ CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "nust_bank_docs")
 BM25_WEIGHT = float(os.getenv("BM25_WEIGHT", "0.4"))
 VECTOR_WEIGHT = float(os.getenv("VECTOR_WEIGHT", "0.6"))
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "3"))
-RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "1"))
+RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "5"))
 
 # ── Guardrails ────────────────────────────────────────────────────────────────
 MAX_INPUT_LENGTH = int(os.getenv("MAX_INPUT_LENGTH", "1000"))
@@ -64,3 +64,8 @@ SKIP_SHEETS = {"Main", "Sheet1"}
 # ── UI ────────────────────────────────────────────────────────────────────────
 APP_TITLE = "AmanAI — NUST Bank Customer Service"
 APP_ICON = "🏦"
+
+# ── Authentication ────────────────────────────────────────────────────────────
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+GUEST_USER = "guest"
+ADMIN_USER = "admin"

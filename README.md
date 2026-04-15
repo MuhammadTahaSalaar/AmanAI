@@ -102,7 +102,8 @@ pytest tests/test_guardrails.py -v
 ```bash
 # Run Ragas evaluation against golden dataset
 python evaluation/evaluate.py
-```
+
+````
 
 Results are saved to `evaluation/evaluation_results.json`.
 

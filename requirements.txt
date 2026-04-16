@@ -179,6 +179,7 @@ pydantic_core==2.41.5
 pydeck==0.9.1
 Pygments==2.20.0
 pyparsing==3.3.2
+PyMuPDF==1.27.2.2
 PyPika==0.51.1
 pyproject_hooks==1.2.0
 PySocks @ file:///home/task_176175228103966/conda-bld/pysocks_1761753009555/work

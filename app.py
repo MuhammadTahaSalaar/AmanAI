@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import warnings
+from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from io import StringIO
 
@@ -116,9 +118,13 @@ def _load_safety() -> SafetyManager:
 
 
 def _run_etl_and_index(vector_store: VectorStore) -> list[Document]:
-    """Run ETL pipeline and index documents in both vector and BM25 stores."""
-    pipeline = ETLPipeline()
-    documents = pipeline.run()
+    """Run ETL pipeline and index documents in both vector and BM25 stores.
+    
+    ETL output (parsed documents) is cached so subsequent sessions skip
+    Excel re-parsing.  Only the first session after server start pays the
+    cost.
+    """
+    documents = _load_etl_documents()
 
     # Index into vector store if empty
     if vector_store.count == 0:
@@ -128,6 +134,13 @@ def _run_etl_and_index(vector_store: VectorStore) -> list[Document]:
         logger.info("Vector store already has %d documents; skipping indexing", vector_store.count)
 
     return documents
+
+
+@st.cache_resource(show_spinner=".")
+def _load_etl_documents() -> list[Document]:
+    """Parse all data sources and return merged document list (cached per server)."""
+    pipeline = ETLPipeline()
+    return pipeline.run()
 
 
 def _build_rag_chain(
@@ -220,11 +233,11 @@ def _render_sidebar() -> None:
             st.caption(
                 "Upload new FAQs or documents to the knowledge base. "
                 "Changes persist for this session only. "
-                "Supports JSON (structured Q&A) or plain text (.txt)."
+                "Supports JSON, TXT, PDF, Excel (.xlsx), and CSV."
             )
             uploaded = st.file_uploader(
                 "Choose a file",
-                type=["json", "txt"],
+                type=["json", "txt", "pdf", "xlsx", "csv"],
                 key="doc_upload",
             )
             if uploaded is not None:
@@ -273,7 +286,8 @@ def _handle_admin_upload(uploaded_file) -> None:
     try:
         # Save to temp file and parse
         import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.name) as tmp:
+        file_ext = Path(uploaded_file.name).suffix  # e.g. ".pdf", ".xlsx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
 
@@ -319,14 +333,24 @@ def main() -> None:
     # User is authenticated, show chat interface
     _render_sidebar()
 
-    # Load components (cached)
-    embedder = _load_embedder()
-    vector_store = _load_vector_store(embedder)
-    st.session_state["vector_store"] = vector_store
+    # Load components — parallelize independent resources.
+    # LLM, Reranker, and Safety have no dependencies on each other or on Embedder,
+    # so we launch them in background threads while Embedder loads on the main thread.
+    with st.spinner("Loading models (embedder, LLM, reranker, safety)..."):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            model_future: Future = pool.submit(_load_model)
+            reranker_future: Future = pool.submit(_load_reranker)
+            safety_future: Future = pool.submit(_load_safety)
 
-    model_loader = _load_model()
-    reranker = _load_reranker()
-    safety = _load_safety()
+            # Embedder loads on the main thread (VectorStore depends on it)
+            embedder = _load_embedder()
+            vector_store = _load_vector_store(embedder)
+            st.session_state["vector_store"] = vector_store
+
+            # Collect parallel results
+            model_loader = model_future.result()
+            reranker = reranker_future.result()
+            safety = safety_future.result()
 
     if model_loader is None:
         st.warning(
@@ -377,6 +401,21 @@ def main() -> None:
 
         # Safety check — sanitized is PII-scrubbed version used for LLM/history
         is_safe, sanitized, rejection = safety.validate_input(user_input)
+
+        # Strip PII placeholder tags (e.g. <PERSON>, <EMAIL_ADDRESS>) so the
+        # LLM receives a clean query instead of being confused by angle-bracket
+        # tokens that may trigger its "refuse PII" directive.
+        # Also remove self-introductions ("My name is ...") that become garbled
+        # after PII anonymization and confuse the small LLM.
+        if sanitized:
+            sanitized = re.sub(r"<PERSON>", "someone", sanitized)
+            sanitized = re.sub(r"<[A-Z_]+>", "", sanitized)
+            # Remove "My name is someone (and)" style intros
+            sanitized = re.sub(
+                r"\bmy\s+name\s+is\s+someone\s*(?:and\s+)?",
+                "", sanitized, flags=re.IGNORECASE,
+            )
+            sanitized = re.sub(r"\s{2,}", " ", sanitized).strip()
 
         # Store sanitized input in history so PII is never passed to the LLM
         # or recalled in subsequent turns (show raw to user above but store clean)

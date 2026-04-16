@@ -39,6 +39,8 @@ Thumbs.db
 # Reference documents
 Plan/
 documents/
+evaluation/
+files_to_upload/
 
 # Notebook checkpoints
-.ipynb_checkpoints/
+.ipynb_checkpoints/s

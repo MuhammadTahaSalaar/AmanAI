@@ -57,10 +57,10 @@ class SessionDocumentManager:
             return False, f"Error adding document: {str(e)}"
 
     def parse_and_add_file(self, file_path: str) -> tuple[bool, str]:
-        """Parse a .txt or .json file and add documents from it.
+        """Parse a file and add documents from it.
 
         Args:
-            file_path: Path to the file (.txt or .json)
+            file_path: Path to the file (.txt, .json, .pdf, .xlsx, .csv)
 
         Returns:
             Tuple of (success, message with document count or error)
@@ -71,12 +71,19 @@ class SessionDocumentManager:
             return False, f"File not found: {file_path}"
 
         try:
-            if path.suffix == ".txt":
+            suffix = path.suffix.lower()
+            if suffix == ".txt":
                 return self._parse_txt_file(path)
-            elif path.suffix == ".json":
+            elif suffix == ".json":
                 return self._parse_json_file(path)
+            elif suffix == ".pdf":
+                return self._parse_pdf_file(path)
+            elif suffix == ".xlsx":
+                return self._parse_excel_file(path)
+            elif suffix == ".csv":
+                return self._parse_csv_file(path)
             else:
-                return False, f"Unsupported file format: {path.suffix}. Use .txt or .json"
+                return False, f"Unsupported file format: {path.suffix}. Use .json, .txt, .pdf, .xlsx, or .csv"
         except Exception as e:
             logger.error("Error parsing file %s: %s", file_path, str(e))
             return False, f"Error parsing file: {str(e)}"
@@ -164,6 +171,72 @@ class SessionDocumentManager:
             List of Document objects added in this session
         """
         return self._documents
+
+    def _parse_pdf_file(self, path: Path) -> tuple[bool, str]:
+        """Parse a PDF file and add extracted text as documents."""
+        from src.data_processing.pdf_processor import PDFProcessor
+
+        processor = PDFProcessor(file_path=path)
+        docs = processor.process()
+        if not docs:
+            return False, "No extractable text found in PDF"
+
+        for doc in docs:
+            self._documents.append(doc)
+
+        logger.info("Added %d document(s) from PDF: %s", len(docs), path.name)
+        return True, f"Added {len(docs)} document(s) from PDF: {path.name}"
+
+    def _parse_excel_file(self, path: Path) -> tuple[bool, str]:
+        """Parse an Excel (.xlsx) file — each row becomes a document."""
+        import pandas as pd
+
+        try:
+            xls = pd.ExcelFile(path)
+        except Exception as e:
+            return False, f"Cannot open Excel file: {e}"
+
+        total = 0
+        for sheet in xls.sheet_names:
+            df = xls.parse(sheet)
+            if df.empty:
+                continue
+            for _, row in df.iterrows():
+                parts = [f"{col}: {val}" for col, val in row.items() if pd.notna(val)]
+                if not parts:
+                    continue
+                content = "\n".join(parts)
+                self._documents.append(
+                    Document(
+                        content=content,
+                        metadata={
+                            "product": sheet,
+                            "source": path.name,
+                            "type": "excel_upload",
+                        },
+                    )
+                )
+                total += 1
+
+        if total == 0:
+            return False, "No data rows found in Excel file"
+        logger.info("Added %d document(s) from Excel: %s", total, path.name)
+        return True, f"Added {total} document(s) from Excel: {path.name}"
+
+    def _parse_csv_file(self, path: Path) -> tuple[bool, str]:
+        """Parse a CSV file — each row becomes a document."""
+        from src.data_processing.csv_processor import CSVProcessor
+
+        processor = CSVProcessor(file_path=path)
+        docs = processor.process()
+        if not docs:
+            return False, "No data rows found in CSV file"
+
+        for doc in docs:
+            self._documents.append(doc)
+
+        logger.info("Added %d document(s) from CSV: %s", len(docs), path.name)
+        return True, f"Added {len(docs)} document(s) from CSV: {path.name}"
 
     def clear_documents(self) -> None:
         """Clear all session documents.

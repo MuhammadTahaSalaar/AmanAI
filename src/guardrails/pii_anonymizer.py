@@ -61,6 +61,17 @@ class PIIAnonymizer:
         "support@nustbank.com.pk",
     }
 
+    # Regex matching NUST Bank product names — entities overlapping these should
+    # NOT be redacted as PERSON (avoids false positives like "Digital Account"
+    # or "Freelancer Digital" being tagged as person names).
+    _PRODUCT_NAME_RE = re.compile(
+        r"NUST\s+(?:Freelancer|Asaan|Waqaar|Sahar|Maximiser|Bachat|"
+        r"Imarat|Ujala|Champs|Little|Roshan|Pensioner|Digital|FYP|"
+        r"4Car|Hunarmand|Special|Mortgage|Personal|Mastercard|PayPak)"
+        r"(?:\s+\w+)*",
+        re.IGNORECASE,
+    )
+
     def __init__(self) -> None:
         # Suppress Presidio's verbose logging during initialization
         presidio_logger = logging.getLogger("presidio-analyzer")
@@ -132,6 +143,13 @@ class PIIAnonymizer:
             score_threshold=0.6,
         )
 
+        # Filter out PERSON entities that overlap with NUST Bank product names
+        results = [
+            r for r in results
+            if r.entity_type != "PERSON"
+            or not self._PRODUCT_NAME_RE.search(text[max(0, r.start - 30):r.end + 10])
+        ]
+
         if results:
             anonymized = self._anonymizer.anonymize(text=text, analyzer_results=results)
             logger.debug("Anonymized %d PII entities", len(results))
@@ -177,6 +195,12 @@ class PIIAnonymizer:
         person_results = [
             r for r in person_results
             if (r.end - r.start) >= 4
+        ]
+        # Filter out PERSON entities that overlap with NUST Bank product names
+        # (e.g. "NUST Freelancer Digital Account" should not have "Digital Account" tagged as PERSON)
+        person_results = [
+            r for r in person_results
+            if not self._PRODUCT_NAME_RE.search(text[max(0, r.start - 30):r.end + 10])
         ]
         results = results + person_results
 

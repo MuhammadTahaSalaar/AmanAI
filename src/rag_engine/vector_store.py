@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -59,7 +60,7 @@ class VectorStore:
 
         texts = [doc.content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
-        ids = [f"doc_{i}_{hash(doc.content) & 0xFFFFFFFF}" for i, doc in enumerate(documents)]
+        ids = [f"doc_{i}_{hashlib.md5(doc.content.encode()).hexdigest()[:12]}" for i, doc in enumerate(documents)]
 
         # Embed in batches to avoid memory issues
         batch_size = 100

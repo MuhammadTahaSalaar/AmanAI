@@ -39,7 +39,7 @@ class SemanticSafetyDetector:
             r"display\s+(?:source\s+)?code",
         ],
         "impersonation": [
-            r"you\s+are\s+(?:no\s+longer|now)\s+(?:a\s+)?(?::\s+)?(?!a\s+customer)",
+            r"you\s+are\s+(?:no\s+longer|now)\s+(?:a\s+)?(?::\s+)?(?:an?\s+)?(?:evil|unrestricted|jailbroken|unfiltered|DAN|rogue|hacker)",
             r"role\s*play\s+as",
             r"simulate\s+(?:being|a)",
             r"pretend\s+you\s+are",
@@ -68,9 +68,16 @@ class SemanticSafetyDetector:
             Tuple of (is_safe, issue_description).
             If is_safe is False, issue_description contains the violated category.
         """
+        # High-confidence banking queries get a pass on impersonation patterns
+        # (e.g., "you are a customer service agent" is fine in banking context)
+        is_banking = self.is_high_confidence_banking_query(text)
+
         text_lower = text.lower()
 
         for cluster_name, patterns in self._compiled_patterns.items():
+            # Skip impersonation checks for clearly banking-related queries
+            if is_banking and cluster_name == "impersonation":
+                continue
             for pattern in patterns:
                 if pattern.search(text_lower):
                     logger.warning(
@@ -96,7 +103,9 @@ class SemanticSafetyDetector:
         banking_keywords = {
             "account", "deposit", "rate", "loan", "transfer", "card",
             "nust", "aman", "amanai", "bank", "finance", "savings",
-            "profit", "charges", "eligibility", "limit"
+            "profit", "charges", "eligibility", "limit",
+            "grandfather", "grandmother", "child", "children", "senior",
+            "pensioner", "retired", "minor", "kid", "kids",
         }
 
         tokens = set(re.findall(r"\b\w+\b", text.lower()))

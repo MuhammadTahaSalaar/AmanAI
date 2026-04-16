@@ -100,4 +100,5 @@ class TestRAGChainMocked:
 
         # Check that the prompt includes history context
         prompt_arg = mock_model.generate.call_args[0][0]
-        assert "Hello" in prompt_arg
+        prompt_text = str(prompt_arg) if isinstance(prompt_arg, list) else prompt_arg
+        assert "Hello" in prompt_text

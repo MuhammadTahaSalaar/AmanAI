@@ -6,11 +6,13 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import config
+
 
 class AuditLogger:
     """Logs all security, safety, and compliance events for audit trails."""
 
-    _LOG_DIR = Path(__file__).parent.parent.parent / "logs"
+    _LOG_DIR = config.PROJECT_ROOT / "logs"
     _SECURITY_LOG_FILE = "security_audit.log"
 
     def __init__(self) -> None:

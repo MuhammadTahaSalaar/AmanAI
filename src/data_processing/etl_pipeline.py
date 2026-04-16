@@ -62,21 +62,20 @@ class ETLPipeline:
         all_documents.extend(json_docs)
         self._save(json_docs, "app_faq_documents.json")
 
-        # 4. Runtime documents (e.g., special offers, dynamic content)
-        runtime_docs = self._process_runtime_documents()
-        all_documents.extend(runtime_docs)
-        logger.info("Loaded %d runtime documents", len(runtime_docs))
+        # NOTE: Runtime documents (data/runtime_document/) are NOT loaded at
+        # launch.  They are meant to be uploaded per-session via the admin
+        # document-upload interface, so they only affect the uploading user's
+        # session and never pollute the base knowledge base.
 
-        # 5. Merged output
+        # 4. Merged output
         self._save(all_documents, "all_documents.json")
 
         logger.info(
-            "ETL complete: %d total documents (rate=%d, faq=%d, json=%d, runtime=%d)",
+            "ETL complete: %d total documents (rate=%d, faq=%d, json=%d)",
             len(all_documents),
             len(rate_docs),
             len(faq_docs),
             len(json_docs),
-            len(runtime_docs),
         )
         return all_documents
 

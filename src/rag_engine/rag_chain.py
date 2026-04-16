@@ -18,7 +18,7 @@ logger = setup_logger(__name__)
 # Banking-related keywords.  If a query contains at least one of these
 # we assume it is broadly on-topic and skip the score-based OOD gate.
 _BANKING_KEYWORDS: frozenset[str] = frozenset({
-    "account", "accounts", "deposit", "deposits", "savings", "saving",
+    "account", "accounts", "deposit", "deposits", "savings", "saving", "save",
     "term", "rate", "rates", "profit", "interest", "loan", "finance",
     "mortgage", "transfer", "payment", "card", "debit", "credit",
     "cheque", "branch", "balance", "withdrawal", "withdraw", "atm",
@@ -31,13 +31,63 @@ _BANKING_KEYWORDS: frozenset[str] = frozenset({
     "bank", "nust", "aman", "amanai", "champs", "little",
     "ujala", "imarat", "nust4car", "mastercard",
     "processing", "tenure", "markup", "instalment", "apply",
+    "children", "child", "kids", "kid", "minor", "minors",
+    # Family / age references that imply banking product queries
+    "daughter", "son", "grandmother", "grandfather", "father", "mother",
+    "retired", "retirement", "freelancer", "freelance", "student",
+    "pensioners", "senior", "seniors", "youth",
+    "invest", "investment", "money", "income",
 })
+
+# Synonym expansion for retrieval — augments the retrieval query with
+# related terms so both BM25 keyword matching and vector similarity
+# can find relevant documents even when the user's wording differs from
+# the stored content (e.g., "children" vs "minors"/"kids").
+_RETRIEVAL_SYNONYMS: dict[str, str] = {
+    "children": "minors kids Little Champs",
+    "child": "minor kid Little Champs",
+    "kids": "minors children Little Champs",
+    "kid": "minor child Little Champs",
+    "minor": "child kid Little Champs",
+    "minors": "children kids Little Champs",
+    "daughter": "child minor kids Little Champs",
+    "son": "child minor kids Little Champs",
+    "elderly": "senior pensioner Waqaar senior citizen",
+    "retired": "senior pensioner Waqaar retirement",
+    "grandmother": "senior elderly pensioner Waqaar senior citizen",
+    "grandfather": "senior elderly pensioner Waqaar senior citizen",
+    "young": "youth teenager",
+    "teenager": "young youth minor",
+    "freelancer": "freelance digital account Asaan",
+    "freelance": "freelancer digital account Asaan",
+    "student": "youth education",
+    "old": "senior elderly pensioner Waqaar",
+    "senior": "elderly pensioner Waqaar senior citizen",
+    "pensioner": "senior elderly Waqaar retired",
+}
+
+# Age patterns that imply banking product eligibility queries
+_AGE_PATTERN = re.compile(
+    r"(?:"
+    r"\b\d{1,3}\s*(?:year|yr)s?\s*old\b"            # "55 years old"
+    r"|\b(?:above|over|below|under|within)\s+\d{1,3}\s*(?:year|yr)?s?\b"  # "above 55", "under 18 years"
+    r"|\b\d{1,3}\s*\+\b"                              # "55+"
+    r"|\b(?:senior|elderly|retired|retirement|pensioner|minor|minors)\b"  # age-related words
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _has_banking_intent(query: str) -> bool:
-    """Return True if the query contains any banking-related keyword."""
+    """Return True if the query contains any banking-related keyword or age reference."""
     tokens = set(re.findall(r"\b\w+\b", query.lower()))
-    return bool(tokens & _BANKING_KEYWORDS)
+    if tokens & _BANKING_KEYWORDS:
+        return True
+    # Age mentions (e.g., "8 year old", "55 years old") strongly imply
+    # eligibility/product queries in a banking context.
+    if _AGE_PATTERN.search(query):
+        return True
+    return False
 
 
 class RAGChain:
@@ -98,30 +148,44 @@ class RAGChain:
         )
         
         # Only augment with previous product context if current query has NO product
-        # (i.e., it's a follow-up like "what is the processing time for it?")
+        # AND it looks like a genuine follow-up (contains referential words or is very short).
+        _FOLLOWUP_HINTS = {"it", "its", "that", "this", "those", "them", "they", "the", "same", "above"}
         if not current_product and chat_history and len(chat_history) >= 2:
-            # Extract last user question to get product context
-            prev_messages = [m for m in chat_history if m.get("role") == "user"]
-            if prev_messages:
-                last_user_query = prev_messages[-1].get("content", "")
-                # Extract product names from last query (handles NUST4Car, NUST Imarat Finance, etc.)
-                product_keywords = re.findall(
-                    r"NUST[\s\w]*(?:Account|Finance|Deposit)",
-                    last_user_query,
-                    re.IGNORECASE,
-                )
-                if product_keywords:
-                    retrieval_query = f"{product_keywords[0]} {user_query}"
-                    # If query was augmented with product context from history,
-                    # treat it as having banking intent (it's a follow-up)
-                    has_intent = True
+            query_tokens = set(re.findall(r"\b\w+\b", user_query.lower()))
+            is_followup = bool(query_tokens & _FOLLOWUP_HINTS) or len(user_query.split()) <= 6
+            if is_followup:
+                # Extract last user question to get product context
+                prev_messages = [m for m in chat_history if m.get("role") == "user"]
+                if prev_messages:
+                    last_user_query = prev_messages[-1].get("content", "")
+                    # Extract product names from last query (handles NUST4Car, NUST Imarat Finance, etc.)
+                    product_keywords = re.findall(
+                        r"NUST[\s\w]*(?:Account|Finance|Deposit)",
+                        last_user_query,
+                        re.IGNORECASE,
+                    )
+                    if product_keywords:
+                        retrieval_query = f"{product_keywords[0]} {user_query}"
+                        # If query was augmented with product context from history,
+                        # treat it as having banking intent (it's a follow-up)
+                        has_intent = True
         
         # Prefix "NUST Bank" for retrieval enhancement when not already mentioned
         if "nust" not in retrieval_query.lower():
             retrieval_query = f"NUST Bank {retrieval_query}"
 
+        # 0b. Synonym expansion — append related terms to boost BM25 recall
+        _tokens = set(re.findall(r"\b\w+\b", retrieval_query.lower()))
+        _extra = {_RETRIEVAL_SYNONYMS[t] for t in _tokens if t in _RETRIEVAL_SYNONYMS}
+        if _extra:
+            retrieval_query = f"{retrieval_query} {' '.join(_extra)}"
+            logger.debug("Synonym-expanded retrieval query: %s", retrieval_query[:120])
+
         # 1. Retrieve candidates using augmented query
-        candidates = self._retriever.retrieve(retrieval_query)
+        #    Fetch a wider pool so the reranker has enough diversity to score.
+        candidates = self._retriever.retrieve(
+            retrieval_query, top_k=config.RERANK_TOP_K * 3,
+        )
         
         # 1a. Augment with session-level documents if provided
         if session_documents:
@@ -170,6 +234,11 @@ class RAGChain:
         query_products = self._PRODUCT_RE.findall(user_query)
         if len(query_products) == 1 and reranked:
             query_product = query_products[0].strip()
+            # Disambiguate products with similar names (e.g., Asaan Digital vs Asaan Remittance)
+            disambiguated = self._disambiguate_product(query_product, user_query)
+            if disambiguated:
+                logger.info("Disambiguated product: '%s' → '%s'", query_product, disambiguated)
+                query_product = disambiguated
             matched = [
                 d for d in reranked
                 if self._doc_matches_product(d, query_product)
@@ -184,12 +253,38 @@ class RAGChain:
                     )
                 reranked = matched
 
+        # 2c. Product name alignment — if the user's product name differs from the
+        #     retrieved docs' actual product name, substitute it in the prompt query
+        #     so the LLM doesn't refuse due to a trivial name mismatch (e.g.,
+        #     "NUST Ujala Account" vs "NUST Ujala Finance").
+        prompt_query = user_query
+        if query_products and reranked:
+            queried_name = query_products[0].strip()
+            # Prefer the disambiguated name if available
+            disambiguated = self._disambiguate_product(queried_name, user_query)
+            actual_product = disambiguated or reranked[0].metadata.get("product", "")
+            if actual_product and queried_name.lower() != actual_product.lower():
+                prompt_query = re.sub(
+                    re.escape(queried_name), actual_product, user_query,
+                    count=1, flags=re.IGNORECASE,
+                )
+                logger.info(
+                    "Aligned product name in prompt: '%s' → '%s'",
+                    queried_name, actual_product,
+                )
+
         # 3. Build context
         context = self._build_context(reranked)
 
+        # 3a. If banking intent detected and context found, add an explicit
+        #     banking-query hint so the small 3B model doesn't mistakenly
+        #     reject indirect queries (e.g., "account for my grandfather").
+        if has_intent and reranked:
+            prompt_query = f"[NUST Bank product query] {prompt_query}"
+
         # 4. Build prompt
         prompt = PromptTemplates.build_rag_prompt(
-            user_query=user_query,
+            user_query=prompt_query,
             context=context,
             chat_history=chat_history,
         )
@@ -273,6 +368,33 @@ class RAGChain:
         re.IGNORECASE,
     )
 
+    # Products with ambiguous short names that need disambiguation
+    _AMBIGUOUS_PRODUCTS = {
+        "asaan": {
+            # If user says "Asaan" without "Remittance", prefer the plain Digital Account
+            "default": "NUST Asaan Digital Account",
+            "remittance": "NUST Asaan Digital Remittance Account",
+        },
+    }
+
+    @classmethod
+    def _disambiguate_product(cls, matched_name: str, user_query: str) -> str | None:
+        """Disambiguate product names that map to multiple actual products.
+
+        Returns the resolved product name or None if no disambiguation needed.
+        """
+        query_lower = user_query.lower()
+        matched_lower = matched_name.lower().strip()
+
+        for key, variants in cls._AMBIGUOUS_PRODUCTS.items():
+            if key in matched_lower:
+                # Check if user specified a distinguishing keyword
+                if "remittance" in query_lower:
+                    return variants.get("remittance")
+                else:
+                    return variants.get("default")
+        return None
+
     @classmethod
     def _extract_product(cls, text: str) -> str | None:
         """Extract a product name from text, e.g. 'NUST4Car', 'NUST Imarat'."""
@@ -287,8 +409,9 @@ class RAGChain:
         meta_product = doc.metadata.get("product", "").lower()
         meta_source = doc.metadata.get("source_sheet", "").lower()
         content_lower = doc.content[:200].lower()  # First 200 chars is enough
-        # Extract a short key, e.g. "nust4car", "nust imarat"
-        key = product_lower.replace("nust ", "nust").split()[0] if product_lower else ""
+        # Use the full product name for matching (not just first word)
+        # This prevents "nust asaan" from matching both Digital and Remittance
+        key = product_lower.replace("nust ", "").strip()
         return (
             key in meta_product
             or key in meta_source

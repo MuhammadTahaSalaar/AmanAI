@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re as _re
 import warnings
 from pathlib import Path
 
@@ -138,6 +139,8 @@ class ModelLoader:
         else:
             prompt_str = prompt
 
+        logger.debug("Prompt length: %d chars", len(prompt_str))
+
         inputs = self._tokenizer(prompt_str, return_tensors="pt", truncation=True)
         inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
 
@@ -158,7 +161,6 @@ class ModelLoader:
 
         # Strip complete role/control markers like <|report|>, <|enduser|>
         # and orphaned trailing fragments like "some text <|"
-        import re as _re
         response = _re.sub(r"<\|[^|>]*\|>", "", response)   # complete <|...|>
         response = _re.sub(r"<\|[^|>]*$", "", response)      # orphaned trailing <|
 

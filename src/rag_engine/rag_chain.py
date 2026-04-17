@@ -44,26 +44,51 @@ _BANKING_KEYWORDS: frozenset[str] = frozenset({
 # can find relevant documents even when the user's wording differs from
 # the stored content (e.g., "children" vs "minors"/"kids").
 _RETRIEVAL_SYNONYMS: dict[str, str] = {
-    "children": "minors kids Little Champs",
-    "child": "minor kid Little Champs",
-    "kids": "minors children Little Champs",
-    "kid": "minor child Little Champs",
-    "minor": "child kid Little Champs",
-    "minors": "children kids Little Champs",
-    "daughter": "child minor kids Little Champs",
-    "son": "child minor kids Little Champs",
-    "elderly": "senior pensioner Waqaar senior citizen",
-    "retired": "senior pensioner Waqaar retirement",
-    "grandmother": "senior elderly pensioner Waqaar senior citizen",
-    "grandfather": "senior elderly pensioner Waqaar senior citizen",
-    "young": "youth teenager",
-    "teenager": "young youth minor",
-    "freelancer": "freelance digital account Asaan",
-    "freelance": "freelancer digital account Asaan",
-    "student": "youth education",
-    "old": "senior elderly pensioner Waqaar",
-    "senior": "elderly pensioner Waqaar senior citizen",
-    "pensioner": "senior elderly Waqaar retired",
+    # Age / demographic → product mappings
+    "children": "minors kids Little Champs account",
+    "child": "minor kid Little Champs account",
+    "kids": "minors children Little Champs account",
+    "kid": "minor child Little Champs account",
+    "minor": "child kid Little Champs account",
+    "minors": "children kids Little Champs account",
+    "daughter": "child minor kids Little Champs account",
+    "son": "child minor kids Little Champs account",
+    "brother": "minor child kid Little Champs account",
+    "sister": "minor child kid Little Champs account",
+    "teenager": "young youth minor Little Champs account",
+    "young": "youth teenager minor",
+    "elderly": "senior pensioner Waqaar senior citizen account",
+    "retired": "senior pensioner Waqaar retirement account",
+    "grandmother": "senior elderly pensioner Waqaar senior citizen account",
+    "grandfather": "senior elderly pensioner Waqaar senior citizen account",
+    "old": "senior elderly pensioner Waqaar account",
+    "senior": "elderly pensioner Waqaar senior citizen account",
+    "pensioner": "senior elderly Waqaar retired account",
+    "freelancer": "freelance Freelancer Digital Account",
+    "freelance": "freelancer Freelancer Digital Account",
+    "student": "youth education account",
+    "woman": "women Sahar account",
+    "women": "woman Sahar account",
+    # Banking terminology synonyms (merged from QueryExpander)
+    "transfer": "remittance fund transfer send money payment",
+    "remittance": "transfer fund transfer send money",
+    "loan": "financing credit facility advance finance",
+    "car": "auto vehicle NUST4Car finance",
+    "vehicle": "car auto NUST4Car finance",
+    "auto": "car vehicle NUST4Car finance",
+    "solar": "energy Ujala finance",
+    "energy": "solar Ujala finance",
+    "house": "home property mortgage Imarat finance",
+    "home": "house property mortgage Imarat finance",
+    "property": "house home mortgage Imarat finance",
+    "new": "Asaan Digital first time banking",
+    "unbanked": "Asaan Digital new banking",
+    "overseas": "non-resident Roshan Digital account NRP",
+    "abroad": "non-resident Roshan Digital account NRP",
+    "startup": "business Value Plus Business account",
+    "business": "startup enterprise Value Plus Business account",
+    "charges": "fee fees cost penalty schedule",
+    "deposit": "savings term deposit fixed deposit",
 }
 
 # Age patterns that imply banking product eligibility queries
@@ -154,21 +179,22 @@ class RAGChain:
             query_tokens = set(re.findall(r"\b\w+\b", user_query.lower()))
             is_followup = bool(query_tokens & _FOLLOWUP_HINTS) or len(user_query.split()) <= 6
             if is_followup:
-                # Extract last user question to get product context
-                prev_messages = [m for m in chat_history if m.get("role") == "user"]
-                if prev_messages:
-                    last_user_query = prev_messages[-1].get("content", "")
-                    # Extract product names from last query (handles NUST4Car, NUST Imarat Finance, etc.)
-                    product_keywords = re.findall(
-                        r"NUST[\s\w]*(?:Account|Finance|Deposit)",
-                        last_user_query,
+                # Extract product context from recent history (both user and assistant messages)
+                product_keywords: list[str] = []
+                for m in reversed(chat_history):
+                    found = re.findall(
+                        r"NUST[\s\w]*(?:Account|Finance|Deposit)|Little\s+Champs|Waqaar|Freelancer\s+Digital|Asaan\s+Digital|Roshan\s+Digital|NUST4Car|Ujala|Imarat|Sahar|Maximiser",
+                        m.get("content", ""),
                         re.IGNORECASE,
                     )
-                    if product_keywords:
-                        retrieval_query = f"{product_keywords[0]} {user_query}"
-                        # If query was augmented with product context from history,
-                        # treat it as having banking intent (it's a follow-up)
-                        has_intent = True
+                    if found:
+                        product_keywords = found
+                        break
+                if product_keywords:
+                    retrieval_query = f"{product_keywords[0]} {user_query}"
+                    # If query was augmented with product context from history,
+                    # treat it as having banking intent (it's a follow-up)
+                    has_intent = True
         
         # Prefix "NUST Bank" for retrieval enhancement when not already mentioned
         if "nust" not in retrieval_query.lower():
@@ -180,6 +206,20 @@ class RAGChain:
         if _extra:
             retrieval_query = f"{retrieval_query} {' '.join(_extra)}"
             logger.debug("Synonym-expanded retrieval query: %s", retrieval_query[:120])
+
+        # 0c. Numeric age injection — if the query mentions a specific age,
+        #     inject the appropriate product keywords to boost retrieval.
+        #     This handles queries like "12 year old" where no demographic
+        #     keyword ("son", "child") is present to trigger synonym expansion.
+        _age_match = re.search(r"\b(\d+)\s*(?:year|yr)s?\s*old\b", retrieval_query, re.IGNORECASE)
+        if _age_match:
+            _age_val = int(_age_match.group(1))
+            if _age_val < 18:
+                retrieval_query += " Little Champs minor children account under 18"
+                logger.debug("Age injection: %d → Little Champs", _age_val)
+            elif _age_val >= 55:
+                retrieval_query += " Waqaar senior citizen elderly account 55 above"
+                logger.debug("Age injection: %d → Waqaar", _age_val)
 
         # 1. Retrieve candidates using augmented query
         #    Fetch a wider pool so the reranker has enough diversity to score.
@@ -195,6 +235,20 @@ class RAGChain:
                 len(session_documents),
                 len(candidates),
             )
+
+        # 1b. Deduplicate candidates by content to avoid wasting reranker capacity
+        seen_content: set[str] = set()
+        unique_candidates: list[Document] = []
+        for doc in candidates:
+            key = doc.content.strip()
+            if key not in seen_content:
+                seen_content.add(key)
+                unique_candidates.append(doc)
+        if len(unique_candidates) < len(candidates):
+            logger.debug(
+                "Deduplication: %d → %d candidates", len(candidates), len(unique_candidates),
+            )
+        candidates = unique_candidates
         
         logger.debug("Retrieved %d candidates for '%s'", len(candidates), retrieval_query[:60])
 
@@ -257,12 +311,26 @@ class RAGChain:
         #     retrieved docs' actual product name, substitute it in the prompt query
         #     so the LLM doesn't refuse due to a trivial name mismatch (e.g.,
         #     "NUST Ujala Account" vs "NUST Ujala Finance").
+        #     Use majority vote across top docs instead of trusting first doc only.
         prompt_query = user_query
         if query_products and reranked:
             queried_name = query_products[0].strip()
             # Prefer the disambiguated name if available
             disambiguated = self._disambiguate_product(queried_name, user_query)
-            actual_product = disambiguated or reranked[0].metadata.get("product", "")
+            if disambiguated:
+                actual_product = disambiguated
+            else:
+                # Majority vote: pick the most common product from top-3 reranked docs
+                from collections import Counter
+                top_products = [
+                    d.metadata.get("product", "")
+                    for d in reranked[:3]
+                    if d.metadata.get("product", "")
+                ]
+                if top_products:
+                    actual_product = Counter(top_products).most_common(1)[0][0]
+                else:
+                    actual_product = ""
             if actual_product and queried_name.lower() != actual_product.lower():
                 prompt_query = re.sub(
                     re.escape(queried_name), actual_product, user_query,
@@ -304,19 +372,28 @@ class RAGChain:
                     "Please contact our helpline: +92 (51) 111 000 494."
                 )
         
-        # 5b. Hallucination detection is ONLY applied if NO context is found
-        # If context exists (reranked docs available), the system prompt constrains the LLM
-        # and we trust the LLM's grounding-aware response
-        # This prevents false positives from regex mismatches on product names like "NUST4Car"
+        # 5b. Grounding check: log warnings when product names in response
+        # don't appear in context (informational only — the fine-tuned model
+        # is trusted to stay grounded via its system prompt).
         if reranked and len(reranked) > 0:
-            # Context exists - trust the LLM's response (constrained by system prompt)
-            logger.debug(
-                "Context provided (%d docs): Trusting LLM response (constrained by system prompt)",
-                len(reranked)
-            )
-        else:
-            # No context - this was already handled in section 5a
-            pass
+            context_products: set[str] = set()
+            for doc in reranked:
+                p = doc.metadata.get("product", "")
+                if p:
+                    context_products.add(p.lower())
+                for m in self._PRODUCT_RE.finditer(doc.content):
+                    context_products.add(m.group(0).strip().lower())
+
+            response_products = self._PRODUCT_RE.findall(response)
+            for rp in response_products:
+                rp_lower = rp.strip().lower()
+                rp_key = rp_lower.replace("nust ", "").strip()
+                found = any(rp_key in cp or cp in rp_key for cp in context_products)
+                if not found and rp_key not in ("nust bank",):
+                    logger.warning(
+                        "Grounding note: LLM mentioned '%s' not in context products %s",
+                        rp.strip(), context_products,
+                    )
 
         return response, reranked
 
@@ -361,10 +438,20 @@ class RAGChain:
     # ---- Product-filtering helpers ----
 
     _PRODUCT_RE = re.compile(
+        r"(?:"
         r"NUST\s*(?:4Car|Hunarmand|Asaan|Waqaar|Sahar|Maximiser|Bachat|"
         r"Imarat|Ujala|Champs|Little|Roshan|Pensioner|Digital|"
-        r"Special\s+Mega\s+Bonus|Mortgage|Personal|Mastercard|PayPak)"
-        r"(?:\s+\w+)*",
+        r"Special\s+Mega\s+Bonus|Mortgage|Personal|Mastercard|PayPak|"
+        r"Freelancer|Value\s+Plus|Value\s+Premium|Flour\s+Mill|Rice|Fauri)"
+        r"(?:\s+\w+)*"
+        r"|Little\s+Champs(?:\s+Account)?"
+        r"|Freelancer\s+Digital(?:\s+Account)?"
+        r"|Roshan\s+Digital(?:\s+Account)?"
+        r"|Asaan\s+Digital(?:\s+(?:Remittance\s+)?Account)?"
+        r"|PakWatan\s+Remittance(?:\s+Account)?"
+        r"|PLS\s+Savings"
+        r"|Value\s+Plus\s+(?:Current|Business)(?:\s+Account)?"
+        r")",
         re.IGNORECASE,
     )
 

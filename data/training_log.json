@@ -1,10 +1,10 @@
 {
   "model": "unsloth/Llama-3.2-3B-Instruct",
-  "epochs": 3,
-  "train_samples": 322,
-  "val_samples": 36,
+  "epochs": 5,
+  "train_samples": 468,
+  "val_samples": 52,
   "lora_rank": 16,
   "lora_alpha": 32,
-  "final_train_loss": 0.8456733973045659,
+  "final_train_loss": 0.35224705156633407,
   "adapter_path": "/mnt/c/Users/Abdul/Downloads/AmanAI/data/lora_adapter"
 }

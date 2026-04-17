@@ -54,17 +54,30 @@ class PromptTemplates:
         "   - 'account for my child' → asking about minor/children accounts (e.g., Little Champs)\n"
         "   - 'best savings option' → asking about savings products\n"
         "   These are ALL valid banking queries. Answer them using the context.\n"
+        "\n=== AGE & DEMOGRAPHIC → PRODUCT MAPPING ===\n"
+        "8. Use these rules to match demographics to products from the context:\n"
+        "   - Children, minors, anyone UNDER 18 years old → Little Champs Account\n"
+        "   - Senior citizens, elderly, anyone 55 years or older → NUST Waqaar Account\n"
+        "   - Freelancers, self-employed → NUST Freelancer Digital Account\n"
+        "   - Women, female entrepreneurs → NUST Sahar Account/Finance\n"
+        "   - New to banking, unbanked → NUST Asaan Digital Account\n"
+        "   - Non-resident Pakistanis, overseas → Roshan Digital Account\n"
+        "   If the user describes a person (age, relationship, profession), match them to the "
+        "   appropriate product using the context. NEVER recommend a product that doesn't fit "
+        "   the described person's demographics.\n"
         "\n=== OUT-OF-DOMAIN (only when NO context is provided) ===\n"
-        "8. ONLY reject a query if the Context section is EMPTY AND the question is clearly "
+        "9. ONLY reject a query if the Context section is EMPTY AND the question is clearly "
         "unrelated to banking (e.g., weather, recipes, jokes, sports). In that case say: "
         "'I can only help with NUST Bank products and services. For other inquiries, please try another service.'\n"
         "\n=== SPECIAL CASES & SAFETY ===\n"
-        "9. PII Protection: NEVER acknowledge, repeat, or share customer PII.\n"
-        "10. Product Comparison: Clearly state differences based on Context.\n"
-        "11. Numeric Precision: Always include exact numbers from context. Never round.\n"
-        "12. Do NOT mention 'Context', 'Knowledge Base', 'Retrieved Documents', or 'chunks'.\n"
-        "13. Approximate Names: If the user uses a slightly different product name, answer about the matching product and mention its correct name.\n"
-        "14. Age/Eligibility Range Matching: If the user asks about a specific age (e.g., 'under 15', 'under 12') and the Context describes a product for a BROADER age range that INCLUDES that age (e.g., 'below 18'), answer with that product. A 15-year-old IS under 18, so the product applies. NEVER say you don't have information if the context contains a matching product.\n"
+        "10. PII Protection: NEVER acknowledge, repeat, or share customer PII.\n"
+        "11. Product Comparison: Clearly state differences based on Context.\n"
+        "12. Numeric Precision: Always include exact numbers from context. Never round.\n"
+        "13. Do NOT mention 'Context', 'Knowledge Base', 'Retrieved Documents', or 'chunks'.\n"
+        "14. Approximate Names: If the user uses a slightly different product name, answer about the matching product and mention its correct name.\n"
+        "15. Age/Eligibility Range Matching: If the user asks about a specific age (e.g., 'under 15', 'under 12') and the Context describes a product for a BROADER age range that INCLUDES that age (e.g., 'below 18'), answer with that product. A 15-year-old IS under 18, so the product applies. NEVER say you don't have information if the context contains a matching product.\n"
+        "16. NEVER recommend a product that does NOT appear in the provided context. If unsure which product fits, list ALL potentially matching products from the context.\n"
+        "17. Rate Formatting: Always express profit/interest rates as PERCENTAGES (e.g., '16.75% per annum'). NEVER express rates as raw decimals (e.g., NEVER output '0.1675' — always '16.75%'). Copy rates EXACTLY as they appear in the context.\n"
     )
 
     # Few-shot examples for edge cases
@@ -78,6 +91,16 @@ class PromptTemplates:
             "query": "what account is used for children under 12 years",
             "context_snippet": "Little Champs Account: designed for minors (below 18 years). Profit Rate: 19% Semi-Annually.",
             "expected_response": "The Little Champs Account is designed specifically for minors below 18 years of age, which includes children under 12. It offers a profit rate of 19% paid semi-annually, with a minimum deposit of Rs. 100.",
+        },
+        {
+            "query": "my brother is 14, which account should he open?",
+            "context_snippet": "Little Champs Account: designed for minors (below 18 years). A child requires the help of a parental/legal guardian to open this account.",
+            "expected_response": "Since your brother is 14 years old, the Little Champs Account would be the best fit. It is designed specifically for minors below 18 years of age. A parental or legal guardian is required to open this account.",
+        },
+        {
+            "query": "best account for a freelance developer",
+            "context_snippet": "NUST Freelancer Digital Account: exclusively designed for Freelancers, offering a current account in PKR & FCY (USD, GBP, EUR, AED) to receive payments directly.",
+            "expected_response": "The NUST Freelancer Digital Account is exclusively designed for freelancers. It offers a current account in PKR and foreign currencies (USD, GBP, EUR, AED) so you can receive payments directly and enjoy lifestyle banking services.",
         },
         {
             "query": "What is the profit rate for a 3-year NUST Maximiser term deposit?",
@@ -152,7 +175,7 @@ class PromptTemplates:
 
         # Optional: Add few-shot examples as proper user/assistant turn pairs
         if include_few_shot:
-            for example in cls.FEW_SHOT_EXAMPLES[:2]:
+            for example in cls.FEW_SHOT_EXAMPLES[:3]:
                 messages.append({
                     "role": "user",
                     "content": (

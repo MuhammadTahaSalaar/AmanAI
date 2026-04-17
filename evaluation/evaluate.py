@@ -83,11 +83,10 @@ def run_evaluation() -> None:
 
         logger.info("Evaluating [%d/%d]: %s", i + 1, len(golden), question[:60])
 
-        # Get answer
-        answer = rag_chain.query(question)
+        # Get answer (rag_chain.query returns a tuple)
+        answer, retrieved_docs = rag_chain.query(question)
 
         # Get context documents used
-        retrieved_docs = hybrid.retrieve(question)
         context_texts = [doc.content for doc in retrieved_docs]
 
         questions.append(question)

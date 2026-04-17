@@ -78,5 +78,92 @@
     {
         "question": "What happens if I forget my internet banking credentials?",
         "ground_truth": "You can recover your credentials through the forgot password option or by contacting customer support."
+    },
+    {
+        "question": "What account is suitable for children under 12 years?",
+        "ground_truth": "The Little Champs Account is designed specifically for minors (below 18 years). It offers a debit card, free first chequebook, and requires a parental/legal guardian for opening and operation.",
+        "difficulty": "hard",
+        "note": "User says 'children under 12' — model must map to Little Champs (for minors under 18)"
+    },
+    {
+        "question": "My grandmother is 60 years old and wants a good savings rate. Which account?",
+        "ground_truth": "The NUST Waqaar Account for senior citizens (minimum age 55) offers a profit rate of 19.00% per annum with monthly payouts. It is specifically designed for senior citizens.",
+        "difficulty": "hard",
+        "note": "Indirect language — must infer senior citizen account from 'grandmother' and age"
+    },
+    {
+        "question": "I'm a software developer working remotely for a US company. Can NUST Bank help me receive my payments?",
+        "ground_truth": "The NUST Freelancer Digital Account is exclusively designed for freelancers to receive payments directly in a bank account and manage foreign currency earnings.",
+        "difficulty": "hard",
+        "note": "User never says 'freelancer' — model must infer from context"
+    },
+    {
+        "question": "What is the markup rate on NUST Ujala Finance and who is it for?",
+        "ground_truth": "NUST Ujala Finance has a markup rate of 6% per annum. It is available for SME Financing, Vendors/Suppliers Financing, NUST Employees Financing, and Domestic Applicant Financing related to renewable/alternate energy solutions.",
+        "difficulty": "medium"
+    },
+    {
+        "question": "I want to buy a car through NUST Bank. What insurance rate will I get?",
+        "ground_truth": "NUST4Car Auto Finance offers an attractive insurance rate at 1.75% per annum along with competitive floating and fixed markup rates.",
+        "difficulty": "hard",
+        "note": "User says 'buy a car' not 'auto finance' — must map to NUST4Car"
+    },
+    {
+        "question": "Can a retired army colonel get a personal loan from NUST Bank?",
+        "ground_truth": "Yes, NUST Personal Finance is available to Armed Forces Officers including retired employees. The product serves serving and retired employees of Armed Forces and allied forces.",
+        "difficulty": "hard",
+        "note": "User says 'retired army colonel' — must infer Armed Forces Officers eligibility"
+    },
+    {
+        "question": "I live in Dubai and want to invest back in Pakistan. Does NUST Bank have anything for me?",
+        "ground_truth": "The Roshan Digital Account is specially designed for Non-Resident Pakistanis (NRPs) to undertake banking, payment, and investment activities. It has no initial deposit or minimum balance requirement.",
+        "difficulty": "hard",
+        "note": "User never mentions 'NRP' or 'Roshan' — must infer from 'live in Dubai' + 'invest in Pakistan'"
+    },
+    {
+        "question": "Compare the profit rates of NUST Maximiser Savings Account with different payout frequencies.",
+        "ground_truth": "NUST Maximiser Savings Account offers 19.00% per annum with monthly payouts and 19.05% per annum with quarterly payouts, as per rates effective July 1st, 2024.",
+        "difficulty": "hard",
+        "note": "Cross-document synthesis — must combine data from two rate entries"
+    },
+    {
+        "question": "I want to expand my shop into a proper office. What financing does NUST offer?",
+        "ground_truth": "NUST Imarat Finance is structured for ownership and capacity enhancement of business premises under the SME segment. It covers acquisition/purchase of commercial/industrial property and construction/renovation of business premises.",
+        "difficulty": "hard",
+        "note": "User says 'expand my shop into an office' — must map to NUST Imarat Finance"
+    },
+    {
+        "question": "What is the profit rate on the Little Champs Account and how often is it paid?",
+        "ground_truth": "The Little Champs Account offers a profit rate of 19.00% per annum, with profit payments made semi-annually. This rate is effective from July 1st, 2024.",
+        "difficulty": "medium"
+    },
+    {
+        "question": "Is there an account for someone who is 56 years old and just retired?",
+        "ground_truth": "The NUST Waqaar Account is designed for senior citizens with a minimum qualifying age of 55 years. It offers 19.00% per annum profit rate with monthly payouts.",
+        "difficulty": "hard",
+        "note": "Must infer Waqaar from age 56 and retirement context"
+    },
+    {
+        "question": "What kind of solar panel financing does NUST Bank provide?",
+        "ground_truth": "NUST Ujala Finance is a financing product for renewable/alternate energy solutions structured under SBP guidelines. It is available for SME, vendors/suppliers, NUST employees, and domestic applicants.",
+        "difficulty": "hard",
+        "note": "User says 'solar panel' — must map to Ujala (renewable energy)"
+    },
+    {
+        "question": "I'm a student doing my FYP at NUST. Can I get funding for my project?",
+        "ground_truth": "This question relates to the NUST FYP Innovation Loan Scheme, which is only available if the relevant document has been uploaded to the system. Contact NUST Bank helpline at +92 (51) 111 000 494.",
+        "difficulty": "hard",
+        "note": "Tests session-uploaded PDF content — should only work if FYP PDF is uploaded"
+    },
+    {
+        "question": "Tell me about bitcoin trading through NUST Bank",
+        "ground_truth": "NUST Bank does not offer cryptocurrency or bitcoin trading operations. For banking-related queries, please contact +92 (51) 111 000 494.",
+        "difficulty": "hard",
+        "note": "Out-of-domain / not offered — should be handled by guardrails or OOD gate"
+    },
+    {
+        "question": "What documents do I need to open a Little Champs Account for my child?",
+        "ground_truth": "To open a Little Champs Account you need: a photocopy of Form-B, Birth Certificate or Student ID card of the minor, and a photocopy of the guardian's identity document (CNIC, NICOP, POC, or Alien Registration Card).",
+        "difficulty": "medium"
     }
 ]

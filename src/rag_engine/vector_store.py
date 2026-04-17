@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from typing import Any
 
 import chromadb
@@ -60,7 +61,8 @@ class VectorStore:
 
         texts = [doc.content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
-        ids = [f"doc_{i}_{hashlib.md5(doc.content.encode()).hexdigest()[:12]}" for i, doc in enumerate(documents)]
+        # Use UUID to avoid ID collisions when add_documents is called multiple times
+        ids = [f"doc_{uuid.uuid4().hex[:16]}" for _ in documents]
 
         # Embed in batches to avoid memory issues
         batch_size = 100

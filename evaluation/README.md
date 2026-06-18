@@ -49,15 +49,15 @@ All commands are run from the **repo root** (`/data/Nust/.../AmanAI`).
 ### Full RAGAS evaluation
 
 ```bash
-python -m evaluation.evaluate_v2
+python -m evaluation.evaluate
 ```
 
 What it does:
 
-1. Loads `evaluation/golden_dataset_v2.json` (40 Q&A pairs).
+1. Loads `evaluation/golden_dataset.json` (40 Q&A pairs).
 2. Calls `backend.app.chat.handle_chat` in-process for every question.
 3. Scores non-refused answers with RAGAS (faithfulness, answer_relevancy, context_precision, context_recall) using `ChatBedrockConverse` + `BedrockEmbeddings` as the judge.
-4. Saves results to `evaluation/evaluation_results_v2.json`.
+4. Saves results to `evaluation/evaluation_results.json`.
 
 If AWS credentials or RAGAS are unavailable the script degrades gracefully — it still saves raw answers and contexts and logs a clear warning.
 
@@ -81,7 +81,7 @@ After running, update `MIN_RERANK_SCORE` in your `.env` to the recommended value
 
 ## Reading the results
 
-### `evaluation_results_v2.json` structure
+### `evaluation_results.json` structure
 
 ```json
 {
@@ -138,7 +138,7 @@ After running, update `MIN_RERANK_SCORE` in your `.env` to the recommended value
 
 ## Golden dataset
 
-`golden_dataset_v2.json` contains **40 pairs** across four categories:
+`golden_dataset.json` contains **40 pairs** across four categories:
 
 | Category | Count | Notes |
 |---|---|---|

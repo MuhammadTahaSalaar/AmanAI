@@ -29,7 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GOLDEN_PATH = Path(__file__).parent / "golden_dataset_v2.json"
+GOLDEN_PATH = Path(__file__).parent / "golden_dataset.json"
 SWEEP_VALUES = [round(v * 0.1, 1) for v in range(1, 7)]  # 0.1 … 0.6
 
 

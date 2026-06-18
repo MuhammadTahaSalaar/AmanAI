@@ -1,159 +1,285 @@
-"""AmanAI Evaluation Script using Ragas framework.
+"""AmanAI Evaluation Harness v2.
 
-Evaluates the RAG pipeline against the golden dataset using standard
-metrics: faithfulness, answer relevancy, and context precision/recall.
+Loads the golden dataset, drives each question through the NEW backend
+pipeline (backend.app.chat.handle_chat), and computes RAGAS metrics using
+a Bedrock judge model.  Saves per-question scores + aggregate means to
+evaluation/evaluation_results.json.
+
+Usage (from repo root):
+    python -m evaluation.evaluate
+
+Requirements: see evaluation/requirements.txt
+AWS credentials + SUPABASE_* env vars must be set before running.
 """
+from __future__ import annotations
 
 import json
+import logging
+import os
 import sys
 from pathlib import Path
+from typing import Any
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# ---------------------------------------------------------------------------
+# Ensure the repo root is on sys.path so that `backend.app.*` resolves.
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-import config
-from src.data_processing.base_processor import Document
-from src.data_processing.etl_pipeline import ETLPipeline
-from src.rag_engine.embedder import Embedder
-from src.rag_engine.vector_store import VectorStore
-from src.rag_engine.bm25_retriever import BM25Retriever
-from src.rag_engine.hybrid_retriever import HybridRetriever
-from src.rag_engine.reranker import Reranker
-from src.rag_engine.rag_chain import RAGChain
-from src.llm.model_loader import ModelLoader
-from src.utils.logger import setup_logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-logger = setup_logger(__name__)
+GOLDEN_PATH = Path(__file__).parent / "golden_dataset.json"
+RESULTS_PATH = Path(__file__).parent / "evaluation_results.json"
 
-
-GOLDEN_DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
-
-
-def load_golden_dataset() -> list[dict]:
-    """Load the evaluation golden dataset."""
-    with open(GOLDEN_DATASET_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+RAGAS_JUDGE_MODEL_ID = os.environ.get(
+    "RAGAS_JUDGE_MODEL_ID", "us.meta.llama3-3-70b-instruct-v1:0"
+)
+RAGAS_EMBED_MODEL_ID = os.environ.get(
+    "RAGAS_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0"
+)
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
-def build_pipeline() -> tuple[RAGChain, HybridRetriever]:
-    """Build the full RAG pipeline for evaluation."""
-    # ETL
-    pipeline = ETLPipeline()
-    documents = pipeline.run()
+# ---------------------------------------------------------------------------
+# Golden dataset loader
+# ---------------------------------------------------------------------------
 
-    # Components
-    embedder = Embedder()
-    vector_store = VectorStore(embedder=embedder)
+def load_golden_dataset() -> list[dict[str, Any]]:
+    with open(GOLDEN_PATH, "r", encoding="utf-8") as fh:
+        return json.load(fh)
 
-    if vector_store.count == 0:
-        vector_store.add_documents(documents)
 
-    bm25 = BM25Retriever()
-    bm25.index(documents)
+# ---------------------------------------------------------------------------
+# Pipeline runner — imports backend in-process
+# ---------------------------------------------------------------------------
 
-    hybrid = HybridRetriever(vector_store=vector_store, bm25_retriever=bm25)
-    reranker = Reranker()
-    model_loader = ModelLoader()
+def run_pipeline(sample: dict[str, Any]) -> tuple[str, list[str], bool]:
+    """Call handle_chat and return (answer, context_texts, refused)."""
+    from backend.app.chat import handle_chat
+    from backend.app.schemas import ChatRequest, HistoryTurn
 
-    rag_chain = RAGChain(
-        retriever=hybrid,
-        reranker=reranker,
-        model_loader=model_loader,
+    history_raw: list[dict[str, str]] = sample.get("history", [])
+    history = [HistoryTurn(role=t["role"], content=t["content"]) for t in history_raw]
+
+    request = ChatRequest(message=sample["question"], history=history)
+    response = handle_chat(request)
+
+    context_texts: list[str] = [c.content for c in response.citations]
+    return response.answer, context_texts, response.refused
+
+
+# ---------------------------------------------------------------------------
+# RAGAS judge setup
+# ---------------------------------------------------------------------------
+
+def _build_ragas_llm() -> Any:
+    """Return a LangChain-compatible LLM backed by AWS Bedrock."""
+    from langchain_aws import ChatBedrockConverse
+
+    return ChatBedrockConverse(
+        model=RAGAS_JUDGE_MODEL_ID,
+        region_name=AWS_REGION,
     )
 
-    return rag_chain, hybrid
 
+def _build_ragas_embeddings() -> Any:
+    from langchain_aws import BedrockEmbeddings
+
+    return BedrockEmbeddings(
+        model_id=RAGAS_EMBED_MODEL_ID,
+        region_name=AWS_REGION,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main evaluation loop
+# ---------------------------------------------------------------------------
 
 def run_evaluation() -> None:
-    """Run the full evaluation pipeline and report results."""
     golden = load_golden_dataset()
-    logger.info("Loaded %d evaluation samples", len(golden))
+    logger.info("Loaded %d evaluation samples from %s", len(golden), GOLDEN_PATH)
 
-    rag_chain, hybrid = build_pipeline()
+    questions: list[str] = []
+    answers: list[str] = []
+    ground_truths: list[str] = []
+    contexts_list: list[list[str]] = []
+    refused_flags: list[bool] = []
+    per_question: list[dict[str, Any]] = []
 
-    # Collect predictions and contexts
-    questions = []
-    answers = []
-    ground_truths = []
-    contexts_list = []
-
+    # ------------------------------------------------------------------
+    # Step 1: run each question through the pipeline
+    # ------------------------------------------------------------------
     for i, sample in enumerate(golden):
         question = sample["question"]
-        ground_truth = sample["ground_truth"]
+        ground_truth = sample.get("ground_truth", "")
+        logger.info(
+            "Running [%d/%d]: %s", i + 1, len(golden), question[:80]
+        )
 
-        logger.info("Evaluating [%d/%d]: %s", i + 1, len(golden), question[:60])
-
-        # Get answer
-        answer = rag_chain.query(question)
-
-        # Get context documents used
-        retrieved_docs = hybrid.retrieve(question)
-        context_texts = [doc.content for doc in retrieved_docs]
+        try:
+            answer, contexts, refused = run_pipeline(sample)
+        except Exception as exc:
+            logger.error("Pipeline error on sample %d: %s", i + 1, exc)
+            answer = ""
+            contexts = []
+            refused = False
 
         questions.append(question)
         answers.append(answer)
         ground_truths.append(ground_truth)
-        contexts_list.append(context_texts)
+        contexts_list.append(contexts)
+        refused_flags.append(refused)
 
-    # Try Ragas evaluation if available
+        per_question.append(
+            {
+                "index": i,
+                "question": question,
+                "ground_truth": ground_truth,
+                "answer": answer,
+                "contexts": contexts,
+                "refused": refused,
+                "domain": sample.get("domain", "in_domain"),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Step 2: RAGAS evaluation
+    # ------------------------------------------------------------------
+    ragas_available = False
+    aggregate: dict[str, float] = {}
+
     try:
         from datasets import Dataset
         from ragas import evaluate
         from ragas.metrics import (
-            faithfulness,
             answer_relevancy,
             context_precision,
             context_recall,
+            faithfulness,
         )
 
-        eval_dataset = Dataset.from_dict(
-            {
-                "question": questions,
-                "answer": answers,
-                "ground_truth": ground_truths,
-                "contexts": contexts_list,
-            }
+        ragas_available = True
+    except ImportError as exc:
+        logger.warning(
+            "RAGAS / datasets not installed (%s). "
+            "Install with: pip install -r evaluation/requirements.txt. "
+            "Saving raw predictions only.",
+            exc,
         )
 
-        results = evaluate(
-            eval_dataset,
-            metrics=[
-                faithfulness,
-                answer_relevancy,
-                context_precision,
-                context_recall,
-            ],
-        )
-
-        logger.info("=== RAGAS Evaluation Results ===")
-        for metric, score in results.items():
-            logger.info("  %s: %.4f", metric, score)
-
-        # Save results
-        output_path = Path(__file__).parent / "evaluation_results.json"
-        with open(output_path, "w") as f:
-            json.dump(dict(results), f, indent=2, default=str)
-        logger.info("Results saved to %s", output_path)
-
-    except ImportError:
-        logger.warning("Ragas not installed. Saving raw predictions only.")
-
-        output = []
-        for q, a, gt, ctx in zip(questions, answers, ground_truths, contexts_list):
-            output.append(
-                {
-                    "question": q,
-                    "answer": a,
-                    "ground_truth": gt,
-                    "num_contexts": len(ctx),
-                }
+    if ragas_available:
+        try:
+            judge_llm = _build_ragas_llm()
+            judge_embeddings = _build_ragas_embeddings()
+        except Exception as exc:
+            logger.warning(
+                "Could not initialise Bedrock judge (%s). "
+                "Check AWS credentials and region. "
+                "Saving raw predictions only.",
+                exc,
             )
+            ragas_available = False
 
-        output_path = Path(__file__).parent / "evaluation_results.json"
-        with open(output_path, "w") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
-        logger.info("Raw results saved to %s", output_path)
+    if ragas_available:
+        # Filter out refused answers — RAGAS cannot score refusals meaningfully
+        non_refused_indices = [
+            idx for idx, r in enumerate(refused_flags) if not r
+        ]
+        if not non_refused_indices:
+            logger.warning("All samples were refused; RAGAS scoring skipped.")
+            ragas_available = False
+        else:
+            eval_data = {
+                "question": [questions[i] for i in non_refused_indices],
+                "answer": [answers[i] for i in non_refused_indices],
+                "ground_truth": [ground_truths[i] for i in non_refused_indices],
+                "contexts": [contexts_list[i] for i in non_refused_indices],
+            }
+            eval_dataset = Dataset.from_dict(eval_data)
 
+            try:
+                # Configure RAGAS to use Bedrock models
+                for metric in [
+                    faithfulness,
+                    answer_relevancy,
+                    context_precision,
+                    context_recall,
+                ]:
+                    metric.llm = judge_llm
+                    if hasattr(metric, "embeddings"):
+                        metric.embeddings = judge_embeddings
+
+                results = evaluate(
+                    eval_dataset,
+                    metrics=[
+                        faithfulness,
+                        answer_relevancy,
+                        context_precision,
+                        context_recall,
+                    ],
+                )
+
+                aggregate = {k: float(v) for k, v in results.items()}
+                logger.info("=== RAGAS Aggregate Results ===")
+                for metric_name, score in aggregate.items():
+                    logger.info("  %-25s %.4f", metric_name, score)
+
+                # Attach per-question RAGAS scores back to per_question list
+                results_df = results.to_pandas()
+                for row_pos, orig_idx in enumerate(non_refused_indices):
+                    row = results_df.iloc[row_pos]
+                    per_question[orig_idx]["ragas_scores"] = {
+                        col: float(row[col])
+                        for col in [
+                            "faithfulness",
+                            "answer_relevancy",
+                            "context_precision",
+                            "context_recall",
+                        ]
+                        if col in row.index
+                    }
+
+            except Exception as exc:
+                logger.error(
+                    "RAGAS evaluate() failed (%s). "
+                    "Check AWS credentials / model access. "
+                    "Saving raw predictions only.",
+                    exc,
+                )
+                ragas_available = False
+
+    # ------------------------------------------------------------------
+    # Step 3: Persist results
+    # ------------------------------------------------------------------
+    output: dict[str, Any] = {
+        "meta": {
+            "golden_dataset": str(GOLDEN_PATH),
+            "total_samples": len(golden),
+            "ragas_scored": ragas_available,
+            "judge_model": RAGAS_JUDGE_MODEL_ID if ragas_available else None,
+            "embed_model": RAGAS_EMBED_MODEL_ID if ragas_available else None,
+        },
+        "aggregate": aggregate,
+        "per_question": per_question,
+    }
+
+    RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(RESULTS_PATH, "w", encoding="utf-8") as fh:
+        json.dump(output, fh, indent=2, ensure_ascii=False, default=str)
+
+    logger.info("Results saved to %s", RESULTS_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     run_evaluation()

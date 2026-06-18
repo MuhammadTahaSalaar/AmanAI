@@ -10,6 +10,8 @@ import pytest
 from src.data_processing.base_processor import Document
 from src.data_processing.json_processor import JSONProcessor
 
+pytestmark = pytest.mark.unit
+
 
 # ── Document Tests ───────────────────────────────────────────────────────────
 

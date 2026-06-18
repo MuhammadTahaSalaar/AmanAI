@@ -1,0 +1,459 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AmanAI – Serverless RAG on AWS (Bedrock + Supabase + Cognito)
+
+# ──────────────────────────────────────────────
+# Parameters
+# ──────────────────────────────────────────────
+Parameters:
+  VercelOrigin:
+    Type: String
+    Default: "https://amanai.vercel.app"
+    Description: "Vercel deployment origin for CORS (e.g. https://your-project.vercel.app)"
+
+  BudgetAlertEmail:
+    Type: String
+    Description: "Email address to receive budget alert notifications"
+
+  CognitoHostedUiDomainPrefix:
+    Type: String
+    Default: "amanai-auth"
+    Description: "Globally unique prefix for the Cognito Hosted UI domain (e.g. amanai-auth-yourname)"
+
+  SupabaseUrl:
+    Type: String
+    Description: "Supabase project URL (e.g. https://xyz.supabase.co)"
+
+  Environment:
+    Type: String
+    Default: "prod"
+    AllowedValues: [dev, prod]
+
+# ──────────────────────────────────────────────
+# Globals
+# ──────────────────────────────────────────────
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 1024
+    Timeout: 30
+    Environment:
+      Variables:
+        AWS_ACCOUNT_ID: !Ref AWS::AccountId
+        LOG_LEVEL: INFO
+
+# ──────────────────────────────────────────────
+# Resources
+# ──────────────────────────────────────────────
+Resources:
+
+  # ── Cognito User Pool ──────────────────────
+  AmanAIUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "amanai-userpool-${Environment}"
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+      UserPoolAddOns:
+        AdvancedSecurityMode: AUDIT
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  AmanAIUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "amanai-spa-client-${Environment}"
+      UserPoolId: !Ref AmanAIUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - "http://localhost:3000"
+        - !Ref VercelOrigin
+      LogoutURLs:
+        - "http://localhost:3000"
+        - !Ref VercelOrigin
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  AmanAIAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref AmanAIUserPool
+      Description: "Admin users who can upload documents"
+
+  AmanAIHostedUiDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoHostedUiDomainPrefix
+      UserPoolId: !Ref AmanAIUserPool
+
+  # ── Secrets Manager ────────────────────────
+  SupabaseServiceKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "amanai/${Environment}/supabase-service-key"
+      Description: "Supabase service role key for AmanAI backend"
+      SecretString: '{"SUPABASE_SERVICE_KEY":"PLACEHOLDER_REPLACE_AFTER_DEPLOY"}'
+
+  # ── Bedrock Guardrail ──────────────────────
+  AmanAIGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: !Sub "amanai-guardrail-${Environment}"
+      Description: "AmanAI safety guardrail: PII masking, topic denial, content filters, prompt attack protection"
+      BlockedInputMessaging: "I cannot process that request. Please ask a banking or financial services question."
+      BlockedOutputsMessaging: "I cannot provide that response. Please ask a banking or financial services question."
+
+      # Sensitive information filters (PII + custom regex)
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: EMAIL
+            Action: MASK
+          - Type: PHONE
+            Action: MASK
+          - Type: NAME
+            Action: MASK
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: BLOCK
+        RegexesConfig:
+          - Name: PakistaniCNIC
+            Description: "Pakistani National Identity Card number"
+            Pattern: '\d{5}-\d{7}-\d{1}'
+            Action: MASK
+          - Name: PakistaniIBAN
+            Description: "Pakistani IBAN"
+            Pattern: 'PK\d{2}[A-Z0-9]{4}\d{16}'
+            Action: MASK
+          - Name: PakistaniPhone
+            Description: "Pakistani phone number"
+            Pattern: '(?:\+92|0)\d{3}[\s\-]?\d{7}'
+            Action: MASK
+
+      # Denied topics (off-domain)
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: NonBankingOffDomain
+            Definition: "Questions unrelated to banking, finance, loans, deposits, insurance, Islamic banking, or financial products and services in Pakistan."
+            Examples:
+              - "Tell me a joke"
+              - "What is the weather today?"
+              - "Help me write code"
+              - "Who won the cricket match?"
+            Type: DENY
+
+      # Content filters
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: HATE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: INSULTS
+            InputStrength: MEDIUM
+            OutputStrength: MEDIUM
+          - Type: SEXUAL
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: VIOLENCE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: MISCONDUCT
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+
+      # Contextual grounding
+      ContextualGroundingPolicyConfig:
+        FiltersConfig:
+          - Type: GROUNDING
+            Threshold: 0.7
+          - Type: RELEVANCE
+            Threshold: 0.7
+
+  AmanAIGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt AmanAIGuardrail.GuardrailId
+      Description: "Version 1 – initial production guardrail"
+
+  # ── IAM Role for Lambda ────────────────────
+  AmanAIFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "amanai-lambda-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Generation models (Llama 3.3 70B and Llama 3.1 8B via cross-region inference profiles)
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:Converse
+                Resource:
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-3-70b-instruct-v1:0"
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-1-8b-instruct-v1:0"
+                  - !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:inference-profile/us.meta.llama3-3-70b-instruct-v1:0"
+                  - !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:inference-profile/us.meta.llama3-1-8b-instruct-v1:0"
+              # Embeddings (Titan)
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"
+              # Rerank (Cohere)
+              - Effect: Allow
+                Action:
+                  - bedrock:Rerank
+                Resource:
+                  - !Sub "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0"
+              # Guardrails
+              - Effect: Allow
+                Action:
+                  - bedrock:ApplyGuardrail
+                Resource:
+                  - !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:guardrail/${AmanAIGuardrail.GuardrailId}"
+
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref SupabaseServiceKeySecret
+
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/aws/lambda/*"
+
+  # ── HTTP API (API Gateway v2) ──────────────
+  AmanAIHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Environment
+      Description: "AmanAI REST API with Cognito JWT authorizer"
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      CorsConfiguration:
+        AllowOrigins:
+          - "http://localhost:3000"
+          - !Ref VercelOrigin
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Amz-Date
+          - X-Api-Key
+          - X-Amz-Security-Token
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 86400
+        AllowCredentials: false
+      Auth:
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.us-east-1.amazonaws.com/${AmanAIUserPool}"
+              audience:
+                - !Ref AmanAIUserPoolClient
+        DefaultAuthorizer: CognitoJwtAuthorizer
+
+  # ── Lambda Function ────────────────────────
+  AmanAIFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "amanai-backend-${Environment}"
+      CodeUri: ../backend/
+      Handler: app.main.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 30
+      Role: !GetAtt AmanAIFunctionRole.Arn
+      Environment:
+        Variables:
+          # Bedrock model IDs (from CONTRACTS.md)
+          BEDROCK_GEN_MODEL_ID: "us.meta.llama3-3-70b-instruct-v1:0"
+          BEDROCK_GEN_MODEL_ID_FALLBACK: "us.meta.llama3-1-8b-instruct-v1:0"
+          BEDROCK_EMBED_MODEL_ID: "amazon.titan-embed-text-v2:0"
+          BEDROCK_RERANK_MODEL_ID: "cohere.rerank-v3-5:0"
+          BEDROCK_GUARDRAIL_ID: !GetAtt AmanAIGuardrail.GuardrailId
+          BEDROCK_GUARDRAIL_VERSION: !GetAtt AmanAIGuardrailVersion.Version
+          # RAG tuning
+          EMBED_DIM: "1024"
+          RETRIEVE_K: "8"
+          RERANK_TOP_N: "4"
+          MIN_RERANK_SCORE: "0.30"
+          MAX_INPUT_CHARS: "2000"
+          MAX_UPLOAD_MB: "5"
+          # Supabase (URL from parameter; key pulled at runtime from Secrets Manager)
+          SUPABASE_URL: !Ref SupabaseUrl
+          SUPABASE_SECRET_ARN: !Ref SupabaseServiceKeySecret
+          # Cognito (for local JWT verification)
+          COGNITO_USER_POOL_ID: !Ref AmanAIUserPool
+          COGNITO_CLIENT_ID: !Ref AmanAIUserPoolClient
+          COGNITO_REGION: "us-east-1"
+          # CORS
+          ALLOWED_ORIGINS: !Sub "http://localhost:3000,${VercelOrigin}"
+          LOG_LEVEL: INFO
+      Events:
+        HealthCheck:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AmanAIHttpApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        Chat:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AmanAIHttpApi
+            Path: /chat
+            Method: POST
+        Documents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AmanAIHttpApi
+            Path: /documents
+            Method: POST
+
+  # ── Budget ─────────────────────────────────
+  AmanAIBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "amanai-monthly-budget-${Environment}"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 20
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
+# ──────────────────────────────────────────────
+# Outputs
+# ──────────────────────────────────────────────
+Outputs:
+  ApiUrl:
+    Description: "AmanAI API endpoint URL"
+    Value: !Sub "https://${AmanAIHttpApi}.execute-api.us-east-1.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "AmanAI-ApiUrl-${Environment}"
+
+  UserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref AmanAIUserPool
+    Export:
+      Name: !Sub "AmanAI-UserPoolId-${Environment}"
+
+  UserPoolClientId:
+    Description: "Cognito User Pool Client ID (SPA)"
+    Value: !Ref AmanAIUserPoolClient
+    Export:
+      Name: !Sub "AmanAI-UserPoolClientId-${Environment}"
+
+  HostedUiDomain:
+    Description: "Cognito Hosted UI base URL"
+    Value: !Sub "https://${CognitoHostedUiDomainPrefix}.auth.us-east-1.amazoncognito.com"
+    Export:
+      Name: !Sub "AmanAI-HostedUiDomain-${Environment}"
+
+  GuardrailId:
+    Description: "Bedrock Guardrail ID"
+    Value: !GetAtt AmanAIGuardrail.GuardrailId
+    Export:
+      Name: !Sub "AmanAI-GuardrailId-${Environment}"
+
+  GuardrailVersion:
+    Description: "Bedrock Guardrail Version"
+    Value: !GetAtt AmanAIGuardrailVersion.Version
+    Export:
+      Name: !Sub "AmanAI-GuardrailVersion-${Environment}"
+
+  SupabaseSecretArn:
+    Description: "ARN of the Supabase service key secret"
+    Value: !Ref SupabaseServiceKeySecret
+    Export:
+      Name: !Sub "AmanAI-SupabaseSecretArn-${Environment}"

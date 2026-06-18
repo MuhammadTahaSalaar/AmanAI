@@ -1,0 +1,11 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "rewrites": [
+    {
+      "source": "/api/proxy/:path*",
+      "destination": "https://YOUR_API_GATEWAY_URL/:path*"
+    }
+  ]
+}

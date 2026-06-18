@@ -5,6 +5,8 @@ import pytest
 from src.guardrails.jailbreak_detector import JailbreakDetector
 from src.guardrails.safety_manager import SafetyManager
 
+pytestmark = pytest.mark.unit
+
 
 # ── Jailbreak Detector Tests ────────────────────────────────────────────────
 

@@ -8,6 +8,8 @@ from src.data_processing.base_processor import Document
 from src.guardrails.safety_manager import SafetyManager
 from src.rag_engine.bm25_retriever import BM25Retriever
 
+pytestmark = pytest.mark.integration
+
 
 class TestSafetyAndBM25Integration:
     """Test the safety pipeline feeding into BM25 retrieval."""

@@ -1,0 +1,19 @@
+# AmanAI Evaluation Harness v2 — Python dependencies
+# Install with: pip install -r evaluation/requirements.txt
+
+# RAGAS evaluation framework
+ragas>=0.1.9
+
+# HuggingFace datasets (required by RAGAS)
+datasets>=2.19.0
+
+# LangChain AWS integration (Bedrock judge LLM + embeddings)
+langchain-aws>=0.1.6
+langchain-core>=0.2.0
+
+# AWS SDK (already in backend/requirements.txt; listed here for standalone use)
+boto3>=1.34.0
+
+# Pydantic (shared with backend)
+pydantic>=2.7.0
+pydantic-settings>=2.3.0

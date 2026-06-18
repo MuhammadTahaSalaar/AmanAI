@@ -1,0 +1,27 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "amanai"
+region = "us-east-1"
+
+[default.deploy.parameters]
+stack_name        = "amanai"
+region            = "us-east-1"
+confirm_changeset = true
+capabilities      = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3        = true
+image_repositories = []
+
+# Override these with your own values before first deploy, or use --guided
+parameter_overrides = [
+  "Environment=prod",
+  "CognitoHostedUiDomainPrefix=amanai-auth",
+  "VercelOrigin=https://amanai.vercel.app",
+  "BudgetAlertEmail=you@example.com"
+]
+
+[default.validate.parameters]
+region = "us-east-1"
+
+[default.build.parameters]
+use_container = false

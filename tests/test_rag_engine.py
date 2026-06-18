@@ -7,6 +7,8 @@ import pytest
 from src.data_processing.base_processor import Document
 from src.rag_engine.bm25_retriever import BM25Retriever
 
+pytestmark = pytest.mark.unit
+
 
 # ── BM25 Retriever Tests ────────────────────────────────────────────────────
 

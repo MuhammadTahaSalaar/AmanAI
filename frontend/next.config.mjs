@@ -1,8 +1,7 @@
-import type { NextConfig } from 'next'
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
-  // Allow cross-origin requests during local dev against the FastAPI backend
+  // Security headers applied to every response
   async headers() {
     return [
       {

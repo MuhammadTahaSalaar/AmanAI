@@ -4,76 +4,153 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-AmanAI is a RAG-based LLM customer-service chatbot for NUST Bank (Pakistan), delivered as a Streamlit app. The pipeline is: **user → safety guardrails → hybrid retrieval (BM25 + ChromaDB) → FlashRank rerank → Llama 3.2 (+ optional QLoRA adapter) → output PII scrub → user.** It runs in two hardware modes — a GPU mode (4-bit quantized 3B model) targeting the VUB **Hydra SLURM cluster**, and a CPU fallback mode (float32 1B model) for laptops.
+AmanAI is a RAG banking assistant for **NUST Bank** (a fictional Pakistani bank),
+rebuilt as a **cheap, serverless, scale-to-zero** system. The legacy 3B/Streamlit
+prototype (Llama-3.2-3B 4-bit + ChromaDB/BM25, GPU-bound, Streamlit UI, QLoRA
+fine-tuning) was **removed** — it is recoverable only from git history. Do **not**
+reintroduce `src/`, `app.py`, `config.py`, `data/lora_adapter`, or any Streamlit/
+ChromaDB/fine-tuning code.
+
+**Per-query flow:** user → local sanitize + Bedrock guardrail → Titan embed query →
+Supabase `match_documents` hybrid search (RETRIEVE_K=8) → Cohere rerank to top
+RERANK_TOP_N=4 → if top score < MIN_RERANK_SCORE (0.30) refuse with a helpline
+redirect (no LLM call) → else grounded Llama generate → output guardrail → answer +
+citations.
+
+**Stack:** FastAPI on AWS Lambda (Mangum) behind API Gateway HTTP API + Cognito JWT
+authorizer; Amazon Bedrock (Llama 3.3 70B default / 3.1 8B fallback, Titan Text
+Embeddings v2, Cohere Rerank 3.5, Bedrock Guardrails); Supabase pgvector (hybrid
+vector + FTS via RRF in SQL); Next.js + Tailwind on Vercel; AWS Cognito auth with an
+`admin` group. **Region: us-east-1.** Fine-tuning is dropped.
+
+> **Source of truth:** [`docs/CONTRACTS.md`](docs/CONTRACTS.md) is the binding contract
+> for model IDs, env-var names, the DB schema, and API shapes. Read it before changing
+> any interface. To deploy, follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Cost model
+> is in [`docs/COST.md`](docs/COST.md).
 
 ## Commands
 
+All commands run **from the repo root** unless noted. The backend venv lives at
+`backend/.venv`.
+
 ```bash
-# Local setup (after `conda create -n amanai python=3.10 && conda activate amanai`)
-bash setup.sh                              # pip install + downloads spaCy en_core_web_lg
+# One-time backend env
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements-dev.txt   # dev (tests); runtime: requirements.txt
 
-# Build the knowledge base (ETL → data/processed/*.json). Run once before first app launch.
-python -m src.data_processing.etl_pipeline
+# Backend tests (fully mocked — no network/AWS/Supabase needed)
+backend/.venv/bin/python -m pytest backend/tests -q             # expect: 56 passed
+backend/.venv/bin/python -m pytest backend/tests/test_chat.py -q            # one module
+backend/.venv/bin/python -m pytest backend/tests/test_chat.py::test_name -q # one test
 
-# Run the app
-streamlit run app.py                       # serves on :8501
+# Run the API locally (needs a .env with Supabase + AWS creds for live calls)
+backend/.venv/bin/uvicorn backend.app.main:app --reload --port 8000
 
-# Tests
-pytest tests/ -v                           # full suite
-pytest tests/test_guardrails.py -v         # one module
-pytest tests/test_guardrails.py::TestSafetyManager -v   # one class
-pytest --cov=src --cov-report=term-missing # with coverage
+# Seed the vector store: data/processed/all_documents.json (358 docs) → Titan embed → Supabase
+backend/.venv/bin/python -m ingestion.seed                      # safe to re-run (content_hash dedup)
+backend/.venv/bin/python -m ingestion.seed --path /custom/docs.json
 
-# Evaluation (Ragas against evaluation/golden_dataset.json → evaluation/evaluation_results.json)
-python evaluation/evaluate.py
+# Evaluation (after deploy + seed — drives the live pipeline)
+backend/.venv/bin/python -m evaluation.evaluate                 # RAGAS → evaluation/evaluation_results.json
+backend/.venv/bin/python -m evaluation.calibrate_threshold      # tune MIN_RERANK_SCORE
 
-# Fine-tuning (GPU required; two steps)
-python -m src.llm.prepare_finetune_data    # ETL docs → data/processed/finetune_{train,val}.jsonl
-python -m src.llm.finetune --epochs 3 --output-dir data/lora_adapter
+# Frontend
+cd frontend && npm install && npm run dev                       # dev server on :3000
+cd frontend && npm run build                                    # production build (next build)
+cd frontend && npx tsc --noEmit                                 # type-check
+
+# Deploy (see docs/DEPLOYMENT.md for the full guided walkthrough)
+cd infra && bash deploy.sh                                      # sam build + sam deploy --guided
 ```
 
-**Hydra (SLURM) workflow** — never run training/serving directly on a login node:
-```bash
-bash scripts/setup_hydra.sh    # ONCE on a login node: creates mamba env, installs torch+unsloth
-sbatch scripts/finetune.sh     # QLoRA fine-tune job (prepares data + trains)
-sbatch scripts/run_app.sh      # serves Streamlit on a GPU node; SSH-tunnel :8501 to view
-```
-
-**Docker** runs CPU-only by design — `docker-compose.yml` forces `EMBEDDING_DEVICE=cpu` and caps memory at 8G. `docker compose up` serves the app on :8501.
+There is **no corpus-build script** in the rebuild: `ingestion/seed.py` loads a
+pre-built `data/processed/all_documents.json` (a `[{content, metadata}]` array; the
+file is gitignored but ships in the working tree). The Supabase schema/RPC is applied
+once by running `backend/sql/schema.sql` in the Supabase SQL editor.
 
 ## Configuration model
 
-`config.py` is the single source of truth — **no magic numbers in business logic**, everything reads from `config`. Every value is overridable via environment variables loaded from `.env` (see `.env.example`). Note that defaults in `config.py`, the README table, and `.env.example` intentionally differ (e.g. `CHUNK_SIZE` is 256 in `config.py` but 800 in `.env.example`); the **effective** value at runtime is the env var if set, else the `config.py` default. When changing tunables, edit `config.py` and/or `.env`, not the call sites.
-
-Key env vars: `LLM_MODEL_NAME` (GPU 4-bit model), `CPU_FALLBACK_MODEL`, `LORA_ADAPTER_PATH` (set this to `data/lora_adapter` to load a fine-tuned adapter), `EMBEDDING_DEVICE` (`cuda`/`cpu`), `HF_TOKEN` (required for gated Llama models), `BM25_WEIGHT`/`VECTOR_WEIGHT`, `RETRIEVAL_TOP_K`/`RERANK_TOP_K`.
+Backend settings live in `backend/app/config.py` (`Settings`, pydantic-settings) — the
+single source of truth for tunables, read once via `get_settings()` (lru-cached). Every
+value is overridable by an environment variable; locally they load from a repo-root
+`.env`. **No magic numbers in business logic** — read from `get_settings()`. In
+production the SAM template (`infra/template.yaml`) sets these env vars on the Lambda;
+`SUPABASE_SERVICE_KEY` is **not** an env var in prod — it is resolved at runtime from
+AWS Secrets Manager (`backend/app/secrets.py`) via `SUPABASE_SECRET_ARN`. The frontend
+reads only `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_COGNITO_REGION`,
+`NEXT_PUBLIC_COGNITO_USER_POOL_ID`, `NEXT_PUBLIC_COGNITO_CLIENT_ID`. Env-var names are
+fixed by `docs/CONTRACTS.md` — change them there first.
 
 ## Architecture
 
-The app (`app.py`) wires components together; all heavy objects are cached via `@st.cache_resource` so models load once per process. Components are dependency-injected (constructors accept optional collaborators, defaulting to real implementations) — this is the seam used by tests.
+### Backend (`backend/app/`) — FastAPI, dependency-injected, deployed to Lambda via Mangum
+- `main.py` — builds the module-level `app = FastAPI(...)`, CORS middleware, and the
+  routes (`/health`, `/chat`, `/documents`); `handler = Mangum(app)` is the Lambda entry
+  point (`app.main.handler` in the SAM template).
+- `config.py` — `Settings` / `get_settings()` (see Configuration model).
+- `secrets.py` — resolves `SUPABASE_SERVICE_KEY` from Secrets Manager at runtime.
+- `bedrock.py` — all Amazon Bedrock calls: Titan embeddings, Llama generation
+  (Converse, with the 8B fallback), Cohere `rerank`, and `apply_guardrail`.
+- `db.py` — Supabase client + the `match_documents` RPC (hybrid RRF search).
+- `retrieval.py` — embed → `match_documents` (RETRIEVE_K) → Cohere rerank (RERANK_TOP_N)
+  → refusal floor at MIN_RERANK_SCORE.
+- `guardrails.py` — local input sanitize/bounds + Bedrock Guardrail (PII mask, denied
+  topics, prompt-attack, contextual grounding).
+- `chat.py` — `handle_chat`: orchestrates the full per-query flow above; returns
+  `answer` + `citations` + `refused`. The eval harness calls this in-process.
+- `ingest.py` — `content_hash` + `ingest_items`: parse → validate → chunk (atomic Q&A/
+  rate items kept whole) → Titan embed → upsert with `content_hash` dedup and
+  `source_kind`. Shared by `ingestion/seed.py` (seed) and `POST /documents` (upload).
+- `auth.py` — Cognito JWT verification (issuer/audience/`token_use`) and `admin`-group
+  enforcement for `/documents` (defence-in-depth behind the API Gateway JWT authorizer).
+- `schemas.py` — Pydantic request/response models matching `docs/CONTRACTS.md`.
+- `prompts.py` — grounded prompt templates.
 
-**Data layer** (`src/data_processing/`) — an ETL pipeline (`etl_pipeline.py`) orchestrates four sources into a unified `list[Document]` (`base_processor.Document`, content + metadata):
-- Rate sheet (`rate_sheet_processor.py`) — Excel "Rate Sheet July 1 2024" → natural-language rate sentences.
-- Product FAQ sheets (`faq_sheet_processor.py`) — remaining Excel sheets (skips `SKIP_SHEETS`) → Q&A docs.
-- App FAQ JSON (`json_processor.py`).
-- Runtime documents — any JSON dropped in `data/runtime_document/` (FAQ-category format), loaded at startup.
+### Data layer — Supabase (`backend/sql/schema.sql`)
+`documents` table: `content`, `metadata jsonb`, `embedding vector(1024)`, `fts`
+(generated tsvector), `content_hash` UNIQUE, `source_kind` (`seed`|`upload`). HNSW index
+on `embedding`, GIN on `fts`. The `match_documents(query_embedding, query_text,
+match_count, rrf_k)` RPC ranks by vector cosine distance and FTS rank, then fuses with
+**Reciprocal Rank Fusion**.
 
-**Retrieval layer** (`src/rag_engine/`) — `Embedder` (BAAI/bge-small-en-v1.5, 384-dim) feeds `VectorStore` (persistent ChromaDB at `data/chroma_db`). `BM25Retriever` is **in-memory and rebuilt every session** from the ETL docs (it is not persisted — this is why `app.py` re-runs ETL/indexing on load). `HybridRetriever` fuses both via Reciprocal Rank Fusion (`BM25_WEIGHT`/`VECTOR_WEIGHT`). `Reranker` (FlashRank cross-encoder) produces the final top-k; `MIN_RELEVANCE_SCORE` (reranker.py) is the out-of-domain threshold.
+### Ingestion (`ingestion/seed.py`)
+Loads `data/processed/all_documents.json` and calls `backend.app.ingest.ingest_items`
+with `source_kind="seed"`.
 
-**Orchestration** (`rag_chain.py`) is the most nuanced file — read it before changing retrieval behavior. It does, in order:
-1. **Query augmentation** — prefixes "NUST Bank" and, for follow-up questions lacking a product name, injects the product from the previous turn's question (regex `_PRODUCT_RE`).
-2. **Two-tier OOD gate** — if the query contains any `_BANKING_KEYWORDS`, it's trusted on-topic and reranked with the augmented query; otherwise it's reranked with the *original* query and rejected with `_OOD_RESPONSE` if the top score is below `MIN_RELEVANCE_SCORE`.
-3. **Product filtering** — when exactly one product is named, drops chunks from other products so the small model can't mix product data (skipped for multi-product comparisons).
-4. Builds context + prompt (`prompt_templates.py`), generates, and forces a grounding/helpline fallback when no context was found.
+### Frontend (`frontend/`) — Next.js 14 + Tailwind, Cognito via aws-amplify v6
+- `lib/amplify.ts` — `Amplify.configure` for the Cognito user pool (SRP flow).
+- `lib/auth.ts` — sign-in/up, token retrieval (`getIdToken`).
+- `lib/api.ts` — typed `getHealth` / `postChat` / `uploadDocument`; sends the Cognito
+  JWT as `Authorization: Bearer`; reads `NEXT_PUBLIC_API_BASE_URL`.
+- App pages: sign-in/up, chat (history, citations, loading, refusal state), admin-only
+  upload panel. Config is `next.config.mjs` (Next 14 cannot load a TS `next.config.ts`).
 
-**LLM** (`src/llm/model_loader.py`) — `ModelLoader.load()` auto-selects GPU (4-bit NF4 via `BitsAndBytesConfig`) vs CPU (float32 fallback model) from `torch.cuda.is_available()`. A LoRA adapter is merged **only on GPU** (it was trained for the GPU model; CPU loads skip it). `generate()` strips `<|...|>` control markers from output. If the model fails to load, `app.py` degrades to **retrieval-only mode** (shows reranked context, no generation).
+### Infra (`infra/`) — AWS SAM
+`template.yaml` defines ~11 resources: Cognito user pool + `admin` group + Hosted UI
+domain, Secrets Manager secret, Bedrock Guardrail (+ version), least-privilege Lambda
+IAM role, HTTP API (Cognito JWT authorizer, CORS, throttling burst 20 / rate 10), the
+Lambda function, and a $20/month Budget. `deploy.sh` wraps `sam build` +
+`sam deploy --guided` and prints the post-deploy values. `samconfig.toml` saves
+parameters. Stack name `amanai`, region `us-east-1`.
 
-**Guardrails** (`src/guardrails/`) — `SafetyManager` runs input through, in order: control-char strip → length check → empty check → `JailbreakDetector` (regex) → `SemanticSafetyDetector` → `PIIAnonymizer` (Presidio + custom CNIC/IBAN regex). **Critical PII invariant:** the raw user message is shown in the UI but only the **sanitized** (PII-scrubbed) text is stored in chat history and ever passed to the LLM — preserve this when touching `app.py`'s message flow. `sanitize_output()` re-scrubs the LLM response. All blocks are recorded by `AuditLogger` to `logs/security_audit.log`.
-
-**Auth** (`src/auth/`) — simple guest/admin login (`AuthManager`, password from `ADMIN_PASSWORD`). Admins can upload `.json`/`.txt` docs at runtime (`SessionDocumentManager`); uploads are indexed into the live retriever via `RAGChain.update_retriever_with_documents()` and persist for the session only.
+### Evaluation (`evaluation/`)
+`evaluate.py` runs the 40-pair `golden_dataset.json` through `chat.handle_chat`
+in-process and scores non-refused answers with RAGAS on a Bedrock judge.
+`calibrate_threshold.py` sweeps `MIN_RERANK_SCORE` to maximise in-domain vs
+out-of-domain separation. See `evaluation/README.md`.
 
 ## Conventions
 
-- Python 3.10. `from __future__ import annotations` at the top of modules using `X | None` syntax.
-- All modules log via `src.utils.logger.setup_logger(__name__)` — do not use `print()` in `src/` (the ETL `__main__` block is the one intentional exception).
-- New retrieval/guardrail/LLM components follow the constructor-injection pattern (optional collaborator args) to stay testable; mirror it.
-- Tests live in `tests/`, mirror `src/` module names, and rely on `conftest.py` putting the project root on `sys.path`. Markers are registered in `pytest.ini` under `--strict-markers`: each module sets a module-level `pytestmark` (`unit` or `integration`), so select subsets with `pytest -m unit` / `pytest -m integration`. New test modules must set `pytestmark` and use only registered markers.
+- Python 3.12, FastAPI. `from __future__ import annotations` where `X | None` syntax is
+  used. Type-annotate signatures; follow PEP 8.
+- Components use **constructor/dependency injection** (optional collaborator args
+  defaulting to real implementations) — this is the seam the tests mock. Mirror it for
+  new components; never hard-code clients inside route handlers.
+- Validate at the boundary (Pydantic schemas); never echo secrets in errors or logs.
+  The raw user message is sanitized before it reaches the LLM or storage — preserve that
+  invariant in `chat.py`/`guardrails.py`.
+- Tests live in `backend/tests/`, mirror `backend/app/` module names, and are fully
+  mocked (no network). Run from the repo root: `backend/.venv/bin/python -m pytest
+  backend/tests -q` (56 passing).
+- Do not change model IDs, env-var names, the DB schema, or API shapes without updating
+  `docs/CONTRACTS.md` first.
